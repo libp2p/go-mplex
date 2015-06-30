@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sync"
 )
 
 const (
 	NewStream = iota
 	Receiver
 	Initiator
+	Unknown
 	Close
 )
 
@@ -122,31 +124,38 @@ func (s *Stream) Close() error {
 	case <-s.closed:
 		return nil
 	default:
-		s.data_out <- msg{
+		close(s.closed)
+		select {
+		case s.data_out <- msg{
 			header: (s.id << 3) | Close,
+		}:
+		default:
 		}
 		close(s.data_in)
-		close(s.closed)
 		return nil
 	}
 }
 
 type Multiplex struct {
-	con      io.ReadWriteCloser
-	buf      *bufio.Reader
+	con       io.ReadWriteCloser
+	buf       *bufio.Reader
+	nextID    uint64
+	outchan   chan msg
+	closed    chan struct{}
+	initiator bool
+
 	channels map[uint64]*Stream
-	nextID   uint64
-	outchan  chan msg
-	closed   chan struct{}
+	ch_lock  sync.Mutex
 }
 
-func NewMultiplex(con io.ReadWriteCloser) *Multiplex {
+func NewMultiplex(con io.ReadWriteCloser, initiator bool) *Multiplex {
 	return &Multiplex{
-		con:      con,
-		buf:      bufio.NewReader(con),
-		channels: make(map[uint64]*Stream),
-		outchan:  make(chan msg),
-		closed:   make(chan struct{}),
+		con:       con,
+		initiator: initiator,
+		buf:       bufio.NewReader(con),
+		channels:  make(map[uint64]*Stream),
+		outchan:   make(chan msg),
+		closed:    make(chan struct{}),
 	}
 }
 
@@ -155,6 +164,8 @@ func (mp *Multiplex) Close() error {
 		return nil
 	}
 	close(mp.closed)
+	mp.ch_lock.Lock()
+	defer mp.ch_lock.Unlock()
 	for _, s := range mp.channels {
 		err := s.Close()
 		if err != nil {
@@ -197,8 +208,20 @@ func (mp *Multiplex) handleOutgoing() {
 			if err != nil {
 				panic(err)
 			}
+		case <-mp.closed:
+			return
 		}
 	}
+}
+
+func (mp *Multiplex) nextChanID() (out uint64) {
+	if mp.initiator {
+		out = mp.nextID + 1
+	} else {
+		out = mp.nextID
+	}
+	mp.nextID += 2
+	return
 }
 
 func (mp *Multiplex) NewStream() *Stream {
@@ -206,19 +229,22 @@ func (mp *Multiplex) NewStream() *Stream {
 }
 
 func (mp *Multiplex) NewNamedStream(name string) *Stream {
-	sid := mp.nextID
-	mp.nextID++
+	mp.ch_lock.Lock()
+	sid := mp.nextChanID()
 	header := (sid << 3) | NewStream
 
 	if name == "" {
 		name = fmt.Sprint(sid)
 	}
+	s := newStream(sid, name, true, mp.outchan)
+	mp.channels[sid] = s
+	mp.ch_lock.Unlock()
+
 	mp.outchan <- msg{
 		header: header,
 		data:   []byte(name),
 	}
-
-	return newStream(sid, name, true, mp.outchan)
+	return s
 }
 
 func (mp *Multiplex) Serve(handler func(s *Stream)) error {
@@ -229,9 +255,7 @@ func (mp *Multiplex) Serve(handler func(s *Stream)) error {
 	for {
 		ch, tag, err := mp.readNextHeader()
 		if err != nil {
-			fmt.Println("ERR")
 			if err == io.EOF {
-				fmt.Println("EOF")
 				return nil
 			}
 			return err
@@ -239,14 +263,13 @@ func (mp *Multiplex) Serve(handler func(s *Stream)) error {
 
 		b, err := mp.readNext()
 		if err != nil {
-			fmt.Println("ERR")
 			if err == io.EOF {
-				fmt.Println("EOF")
 				return nil
 			}
 			return err
 		}
 
+		mp.ch_lock.Lock()
 		msch, ok := mp.channels[ch]
 		if !ok {
 			var name string
@@ -257,13 +280,17 @@ func (mp *Multiplex) Serve(handler func(s *Stream)) error {
 			mp.channels[ch] = msch
 			go handler(msch)
 			if tag == NewStream {
+				mp.ch_lock.Unlock()
 				continue
 			}
 		}
+		mp.ch_lock.Unlock()
 
 		if tag == Close {
 			msch.Close()
+			mp.ch_lock.Lock()
 			delete(mp.channels, ch)
+			mp.ch_lock.Unlock()
 			continue
 		}
 
@@ -272,7 +299,8 @@ func (mp *Multiplex) Serve(handler func(s *Stream)) error {
 }
 
 func (mp *Multiplex) shutdown() {
-	close(mp.outchan)
+	mp.ch_lock.Lock()
+	defer mp.ch_lock.Unlock()
 	for _, s := range mp.channels {
 		s.Close()
 	}
@@ -286,10 +314,8 @@ func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
 
 	// get channel ID
 	ch := h >> 3
-	fmt.Println("CHANNEL: ", ch)
 
 	rem := h & 7
-	fmt.Println("REM: ", rem)
 
 	return ch, rem, nil
 }
@@ -302,7 +328,7 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	buf := make([]byte, l)
-	n, err := mp.buf.Read(buf)
+	n, err := io.ReadFull(mp.buf, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -312,15 +338,6 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf, nil
-}
-
-func dump(r io.Reader) {
-	out, err := ioutil.ReadAll(r)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(out)
 }
 
 func EncodeVarint(x uint64) []byte {
