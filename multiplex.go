@@ -122,6 +122,9 @@ func (s *Stream) Close() error {
 	case <-s.closed:
 		return nil
 	default:
+		s.data_out <- msg{
+			header: (s.id << 3) | Close,
+		}
 		close(s.data_in)
 		close(s.closed)
 		return nil
@@ -134,6 +137,7 @@ type Multiplex struct {
 	channels map[uint64]*Stream
 	nextID   uint64
 	outchan  chan msg
+	closed   chan struct{}
 }
 
 func NewMultiplex(con io.ReadWriteCloser) *Multiplex {
@@ -142,6 +146,30 @@ func NewMultiplex(con io.ReadWriteCloser) *Multiplex {
 		buf:      bufio.NewReader(con),
 		channels: make(map[uint64]*Stream),
 		outchan:  make(chan msg),
+		closed:   make(chan struct{}),
+	}
+}
+
+func (mp *Multiplex) Close() error {
+	if mp.IsClosed() {
+		return nil
+	}
+	close(mp.closed)
+	for _, s := range mp.channels {
+		err := s.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (mp *Multiplex) IsClosed() bool {
+	select {
+	case <-mp.closed:
+		return true
+	default:
+		return false
 	}
 }
 

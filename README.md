@@ -15,5 +15,4 @@ mplex.Serve(func(s *multiplex.Stream) {
 	// echo back everything received
 	io.Copy(s, s)
 })
-
 ```
