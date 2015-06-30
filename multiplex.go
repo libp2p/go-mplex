@@ -2,7 +2,6 @@ package multiplex
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -36,7 +35,7 @@ type Stream struct {
 	closed   chan struct{}
 	data_in  chan []byte
 	data_out chan<- msg
-	buf      *bytes.Buffer
+	extra    []byte
 }
 
 func newStream(id uint64, name string, initiator bool, send chan<- msg) *Stream {
@@ -53,7 +52,6 @@ func newStream(id uint64, name string, initiator bool, send chan<- msg) *Stream 
 		data_in:  make(chan []byte, 8),
 		data_out: send,
 		closed:   make(chan struct{}),
-		buf:      new(bytes.Buffer),
 	}
 }
 
@@ -69,45 +67,24 @@ func (s *Stream) receive(b []byte) {
 }
 
 func (s *Stream) Read(b []byte) (int, error) {
-	select {
-	case <-s.closed:
-		return 0, io.EOF
-	default:
-	}
-
-	lb := len(b)
-	nread := 0
-
-	if s.buf.Len() > 0 {
-		n, err := s.buf.Read(b)
-		if err != nil {
-			return 0, err
-		}
-
-		if n >= len(b) {
-			return n, nil
-		}
-		b = b[n:]
-		nread += n
-	}
-	for len(b) > 0 {
+	if s.extra == nil {
 		select {
-		case data, ok := <-s.data_in:
-			if !ok {
-				return nread, nil
-			}
-			n := copy(b, data)
-			if n < len(data) {
-				s.buf.Write(data[n:])
-				return lb, nil
-			}
-			b = b[n:]
-			nread += n
 		case <-s.closed:
-			return nread, nil
+			return 0, io.EOF
+		case read, ok := <-s.data_in:
+			if !ok {
+				return 0, io.EOF
+			}
+			s.extra = read
 		}
 	}
-	return lb, nil
+	n := copy(b, s.extra)
+	if n < len(s.extra) {
+		s.extra = s.extra[n:]
+	} else {
+		s.extra = nil
+	}
+	return n, nil
 }
 
 func (s *Stream) Write(b []byte) (int, error) {
