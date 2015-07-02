@@ -72,15 +72,19 @@ func (s *Stream) Read(b []byte) (int, error) {
 		case <-s.closed:
 			return 0, io.EOF
 		case read, ok := <-s.data_in:
+			buf := make([]byte, len(read))
+			copy(buf, read)
 			if !ok {
 				return 0, io.EOF
 			}
-			s.extra = read
+			s.extra = buf
 		}
 	}
 	n := copy(b, s.extra)
 	if n < len(s.extra) {
-		s.extra = s.extra[n:]
+		extra := make([]byte, len(s.extra)-n)
+		copy(extra, s.extra[n:])
+		s.extra = extra
 	} else {
 		s.extra = nil
 	}
@@ -88,9 +92,16 @@ func (s *Stream) Read(b []byte) (int, error) {
 }
 
 func (s *Stream) Write(b []byte) (int, error) {
+	errs := make(chan error, 1)
 	select {
-	case s.data_out <- msg{header: s.header, data: b}:
-		return len(b), nil
+	case s.data_out <- msg{header: s.header, data: b, err: errs}:
+		select {
+		case err := <-errs:
+			return len(b), err
+		case <-s.closed:
+			return 0, errors.New("stream closed")
+		}
+
 	case <-s.closed:
 		return 0, errors.New("stream closed")
 	}
@@ -105,6 +116,7 @@ func (s *Stream) Close() error {
 		select {
 		case s.data_out <- msg{
 			header: (s.id << 3) | Close,
+			err:    make(chan error, 1), //throw away error, whatever
 		}:
 		default:
 		}
@@ -172,19 +184,24 @@ func (mp *Multiplex) handleOutgoing() {
 			buf := EncodeVarint(msg.header)
 			_, err := mp.con.Write(buf)
 			if err != nil {
-				panic(err)
+				msg.err <- err
+				continue
 			}
 
 			buf = EncodeVarint(uint64(len(msg.data)))
 			_, err = mp.con.Write(buf)
 			if err != nil {
-				panic(err)
+				msg.err <- err
+				continue
 			}
 
 			_, err = mp.con.Write(msg.data)
 			if err != nil {
-				panic(err)
+				msg.err <- err
+				continue
 			}
+
+			msg.err <- nil
 		case <-mp.closed:
 			return
 		}
@@ -220,7 +237,9 @@ func (mp *Multiplex) NewNamedStream(name string) *Stream {
 	mp.outchan <- msg{
 		header: header,
 		data:   []byte(name),
+		err:    make(chan error, 1), //throw away error
 	}
+
 	return s
 }
 
