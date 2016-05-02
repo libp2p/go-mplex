@@ -1,0 +1,14 @@
+{
+  "author": "whyrusleeping",
+  "bugs": {
+    "url": "https://github.com/whyrusleeping/go-multiplex"
+  },
+  "gx": {
+    "dvcsimport": "github.com/whyrusleeping/go-multiplex"
+  },
+  "gxVersion": "0.7.0",
+  "language": "go",
+  "license": "",
+  "name": "go-multiplex",
+  "version": "0.0.0"
+}

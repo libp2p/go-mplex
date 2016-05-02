@@ -3,10 +3,9 @@ package multiplex
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"testing"
-
-	rand "github.com/dustin/randbo"
 )
 
 func TestBasicStreams(t *testing.T) {
@@ -62,7 +61,7 @@ func TestEcho(t *testing.T) {
 	mpb := NewMultiplex(b, true)
 
 	mes := make([]byte, 40960)
-	rand.New().Read(mes)
+	rand.Read(mes)
 	go func() {
 		s, err := mpb.Accept()
 		if err != nil {
