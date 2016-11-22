@@ -2,14 +2,18 @@ package multiplex
 
 import (
 	"bufio"
-	"encoding/binary"
+	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"net"
 	"sync"
 	"time"
+
+	mpool "github.com/jbenet/go-msgio/mpool"
 )
+
+var MaxMessageSize = 1 << 20
 
 const (
 	NewStream = iota
@@ -19,23 +23,21 @@ const (
 	Close
 )
 
-var _ = ioutil.ReadAll
-var _ = bufio.NewReadWriter
-var _ = binary.MaxVarintLen16
-
-type msg struct {
-	header uint64
-	data   []byte
-}
-
 type Stream struct {
-	id       uint64
-	name     string
-	header   uint64
-	data_in  chan []byte
-	data_out chan<- msg
-	extra    []byte
-	mp       *Multiplex
+	id      uint64
+	name    string
+	header  uint64
+	data_in chan []byte
+	mp      *Multiplex
+
+	extra []byte
+
+	// exbuf is for holding the reference to the beginning of the extra slice
+	// for later memory pool freeing
+	exbuf []byte
+
+	wDeadline time.Time
+	rDeadline time.Time
 
 	clLock sync.Mutex
 	closed bool
@@ -84,25 +86,51 @@ func (m *Multiplex) Accept() (*Stream, error) {
 	}
 }
 
-func (s *Stream) Read(b []byte) (int, error) {
-	if s.extra == nil {
-		read, ok := <-s.data_in
+func (s *Stream) waitForData(ctx context.Context) error {
+	if !s.rDeadline.IsZero() {
+		dctx, cancel := context.WithDeadline(ctx, s.rDeadline)
+		defer cancel()
+		ctx = dctx
+	}
+	select {
+	case read, ok := <-s.data_in:
 		if !ok {
-			return 0, io.EOF
+			return io.EOF
 		}
 		s.extra = read
+		s.exbuf = read
+		return nil
+	case <-s.clCh:
+		return io.EOF
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Stream) Read(b []byte) (int, error) {
+	if s.extra == nil {
+		err := s.waitForData(context.Background())
+		if err != nil {
+			return 0, err
+		}
 	}
 	n := copy(b, s.extra)
 	if n < len(s.extra) {
 		s.extra = s.extra[n:]
 	} else {
+		mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
 		s.extra = nil
+		s.exbuf = nil
 	}
 	return n, nil
 }
 
 func (s *Stream) Write(b []byte) (int, error) {
-	err := s.mp.sendMsg(s.header, b)
+	if s.isClosed() {
+		return 0, fmt.Errorf("cannot write to closed stream")
+	}
+
+	err := s.mp.sendMsg(s.header, b, s.wDeadline)
 	if err != nil {
 		return 0, err
 	}
@@ -125,26 +153,29 @@ func (s *Stream) Close() error {
 
 	s.closed = true
 	close(s.clCh)
-	return s.mp.sendMsg((s.id<<3)|Close, nil)
+	return s.mp.sendMsg((s.id<<3)|Close, nil, time.Time{})
 }
 
 func (s *Stream) SetDeadline(t time.Time) error {
+	s.rDeadline = t
+	s.wDeadline = t
 	return nil
 }
 
 func (s *Stream) SetReadDeadline(t time.Time) error {
+	s.rDeadline = t
 	return nil
 }
 
 func (s *Stream) SetWriteDeadline(t time.Time) error {
+	s.wDeadline = t
 	return nil
 }
 
 type Multiplex struct {
-	con       io.ReadWriteCloser
+	con       net.Conn
 	buf       *bufio.Reader
 	nextID    uint64
-	outchan   chan msg
 	closed    chan struct{}
 	initiator bool
 
@@ -159,13 +190,12 @@ type Multiplex struct {
 	chLock   sync.Mutex
 }
 
-func NewMultiplex(con io.ReadWriteCloser, initiator bool) *Multiplex {
+func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
 		con:       con,
 		initiator: initiator,
 		buf:       bufio.NewReader(con),
 		channels:  make(map[uint64]*Stream),
-		outchan:   make(chan msg),
 		closed:    make(chan struct{}),
 		nstreams:  make(chan *Stream, 16),
 		errs:      make(chan error),
@@ -202,9 +232,14 @@ func (mp *Multiplex) IsClosed() bool {
 	}
 }
 
-func (mp *Multiplex) sendMsg(header uint64, data []byte) error {
+func (mp *Multiplex) sendMsg(header uint64, data []byte, dl time.Time) error {
 	mp.wrLock.Lock()
 	defer mp.wrLock.Unlock()
+	if !dl.IsZero() {
+		if err := mp.con.SetWriteDeadline(dl); err != nil {
+			return err
+		}
+	}
 	n := EncodeVarint(mp.hdrBuf, header)
 	n += EncodeVarint(mp.hdrBuf[n:], uint64(len(data)))
 	_, err := mp.con.Write(mp.hdrBuf[:n])
@@ -212,9 +247,16 @@ func (mp *Multiplex) sendMsg(header uint64, data []byte) error {
 		return err
 	}
 
-	_, err = mp.con.Write(data)
-	if err != nil {
-		return err
+	if len(data) != 0 {
+		_, err = mp.con.Write(data)
+		if err != nil {
+			return err
+		}
+	}
+	if !dl.IsZero() {
+		if err := mp.con.SetWriteDeadline(time.Time{}); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -246,7 +288,7 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.channels[sid] = s
 	mp.chLock.Unlock()
 
-	err := mp.sendMsg(header, []byte(name))
+	err := mp.sendMsg(header, []byte(name), time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -337,17 +379,17 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 		return nil, err
 	}
 
-	buf := make([]byte, l)
+	if l > uint64(MaxMessageSize) {
+		return nil, fmt.Errorf("message size too large!")
+	}
+
+	buf := mpool.ByteSlicePool.Get(uint32(l)).([]byte)[:l]
 	n, err := io.ReadFull(mp.buf, buf)
 	if err != nil {
 		return nil, err
 	}
 
-	if n != int(l) {
-		panic("NOT THE SAME")
-	}
-
-	return buf, nil
+	return buf[:n], nil
 }
 
 func EncodeVarint(buf []byte, x uint64) int {
