@@ -32,7 +32,10 @@ func TestBasicStreams(t *testing.T) {
 		}
 	}()
 
-	s := mpa.NewStream()
+	s, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	buf := make([]byte, len(mes))
 	n, err := s.Read(buf)
@@ -72,9 +75,12 @@ func TestEcho(t *testing.T) {
 		io.Copy(s, s)
 	}()
 
-	s := mpa.NewStream()
+	s, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	_, err := s.Write(mes)
+	_, err = s.Write(mes)
 	if err != nil {
 		t.Fatal(err)
 	}

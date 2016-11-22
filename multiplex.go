@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"sync"
+	"time"
 )
 
 const (
@@ -25,20 +26,23 @@ var _ = binary.MaxVarintLen16
 type msg struct {
 	header uint64
 	data   []byte
-	err    chan<- error
 }
 
 type Stream struct {
 	id       uint64
 	name     string
 	header   uint64
-	closed   chan struct{}
 	data_in  chan []byte
 	data_out chan<- msg
 	extra    []byte
+	mp       *Multiplex
+
+	clLock sync.Mutex
+	closed bool
+	clCh   chan struct{}
 }
 
-func newStream(id uint64, name string, initiator bool, send chan<- msg) *Stream {
+func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
 	var hfn uint64
 	if initiator {
 		hfn = 2
@@ -46,12 +50,12 @@ func newStream(id uint64, name string, initiator bool, send chan<- msg) *Stream 
 		hfn = 1
 	}
 	return &Stream{
-		id:       id,
-		name:     name,
-		header:   (id << 3) | hfn,
-		data_in:  make(chan []byte, 8),
-		data_out: send,
-		closed:   make(chan struct{}),
+		id:      id,
+		name:    name,
+		header:  (id << 3) | hfn,
+		data_in: make(chan []byte, 8),
+		clCh:    make(chan struct{}),
+		mp:      mp,
 	}
 }
 
@@ -62,7 +66,7 @@ func (s *Stream) Name() string {
 func (s *Stream) receive(b []byte) {
 	select {
 	case s.data_in <- b:
-	case <-s.closed:
+	case <-s.clCh:
 	}
 }
 
@@ -82,15 +86,11 @@ func (m *Multiplex) Accept() (*Stream, error) {
 
 func (s *Stream) Read(b []byte) (int, error) {
 	if s.extra == nil {
-		select {
-		case <-s.closed:
+		read, ok := <-s.data_in
+		if !ok {
 			return 0, io.EOF
-		case read, ok := <-s.data_in:
-			if !ok {
-				return 0, io.EOF
-			}
-			s.extra = read
 		}
+		s.extra = read
 	}
 	n := copy(b, s.extra)
 	if n < len(s.extra) {
@@ -102,37 +102,42 @@ func (s *Stream) Read(b []byte) (int, error) {
 }
 
 func (s *Stream) Write(b []byte) (int, error) {
-	errs := make(chan error, 1)
-	select {
-	case s.data_out <- msg{header: s.header, data: b, err: errs}:
-		select {
-		case err := <-errs:
-			return len(b), err
-		case <-s.closed:
-			return 0, errors.New("stream closed")
-		}
-
-	case <-s.closed:
-		return 0, errors.New("stream closed")
+	err := s.mp.sendMsg(s.header, b)
+	if err != nil {
+		return 0, err
 	}
+
+	return len(b), nil
+}
+
+func (s *Stream) isClosed() bool {
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+	return s.closed
 }
 
 func (s *Stream) Close() error {
-	select {
-	case <-s.closed:
-		return nil
-	default:
-		close(s.closed)
-		select {
-		case s.data_out <- msg{
-			header: (s.id << 3) | Close,
-			err:    make(chan error, 1), //throw away error, whatever
-		}:
-		default:
-		}
-		close(s.data_in)
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+	if s.closed {
 		return nil
 	}
+
+	s.closed = true
+	close(s.clCh)
+	return s.mp.sendMsg((s.id<<3)|Close, nil)
+}
+
+func (s *Stream) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (s *Stream) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (s *Stream) SetWriteDeadline(t time.Time) error {
+	return nil
 }
 
 type Multiplex struct {
@@ -143,11 +148,15 @@ type Multiplex struct {
 	closed    chan struct{}
 	initiator bool
 
+	wrLock sync.Mutex
+
 	nstreams chan *Stream
 	errs     chan error
 
+	hdrBuf []byte
+
 	channels map[uint64]*Stream
-	ch_lock  sync.Mutex
+	chLock   sync.Mutex
 }
 
 func NewMultiplex(con io.ReadWriteCloser, initiator bool) *Multiplex {
@@ -160,9 +169,9 @@ func NewMultiplex(con io.ReadWriteCloser, initiator bool) *Multiplex {
 		closed:    make(chan struct{}),
 		nstreams:  make(chan *Stream, 16),
 		errs:      make(chan error),
+		hdrBuf:    make([]byte, 20),
 	}
 
-	go mp.handleOutgoing()
 	go mp.handleIncoming()
 
 	return mp
@@ -173,8 +182,8 @@ func (mp *Multiplex) Close() error {
 		return nil
 	}
 	close(mp.closed)
-	mp.ch_lock.Lock()
-	defer mp.ch_lock.Unlock()
+	mp.chLock.Lock()
+	defer mp.chLock.Unlock()
 	for _, s := range mp.channels {
 		err := s.Close()
 		if err != nil {
@@ -193,39 +202,22 @@ func (mp *Multiplex) IsClosed() bool {
 	}
 }
 
-func (mp *Multiplex) handleOutgoing() {
-	for {
-		select {
-		case msg, ok := <-mp.outchan:
-			if !ok {
-				return
-			}
-
-			buf := EncodeVarint(msg.header)
-			_, err := mp.con.Write(buf)
-			if err != nil {
-				msg.err <- err
-				continue
-			}
-
-			buf = EncodeVarint(uint64(len(msg.data)))
-			_, err = mp.con.Write(buf)
-			if err != nil {
-				msg.err <- err
-				continue
-			}
-
-			_, err = mp.con.Write(msg.data)
-			if err != nil {
-				msg.err <- err
-				continue
-			}
-
-			msg.err <- nil
-		case <-mp.closed:
-			return
-		}
+func (mp *Multiplex) sendMsg(header uint64, data []byte) error {
+	mp.wrLock.Lock()
+	defer mp.wrLock.Unlock()
+	n := EncodeVarint(mp.hdrBuf, header)
+	n += EncodeVarint(mp.hdrBuf[n:], uint64(len(data)))
+	_, err := mp.con.Write(mp.hdrBuf[:n])
+	if err != nil {
+		return err
 	}
+
+	_, err = mp.con.Write(data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (mp *Multiplex) nextChanID() (out uint64) {
@@ -238,29 +230,28 @@ func (mp *Multiplex) nextChanID() (out uint64) {
 	return
 }
 
-func (mp *Multiplex) NewStream() *Stream {
+func (mp *Multiplex) NewStream() (*Stream, error) {
 	return mp.NewNamedStream("")
 }
 
-func (mp *Multiplex) NewNamedStream(name string) *Stream {
-	mp.ch_lock.Lock()
+func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
+	mp.chLock.Lock()
 	sid := mp.nextChanID()
 	header := (sid << 3) | NewStream
 
 	if name == "" {
 		name = fmt.Sprint(sid)
 	}
-	s := newStream(sid, name, true, mp.outchan)
+	s := mp.newStream(sid, name, true)
 	mp.channels[sid] = s
-	mp.ch_lock.Unlock()
+	mp.chLock.Unlock()
 
-	mp.outchan <- msg{
-		header: header,
-		data:   []byte(name),
-		err:    make(chan error, 1), //throw away error
+	err := mp.sendMsg(header, []byte(name))
+	if err != nil {
+		return nil, err
 	}
 
-	return s
+	return s, nil
 }
 
 func (mp *Multiplex) sendErr(err error) {
@@ -285,14 +276,15 @@ func (mp *Multiplex) handleIncoming() {
 			return
 		}
 
-		mp.ch_lock.Lock()
+		mp.chLock.Lock()
 		msch, ok := mp.channels[ch]
+		mp.chLock.Unlock()
 		if !ok {
 			var name string
 			if tag == NewStream {
 				name = string(b)
 			}
-			msch = newStream(ch, name, false, mp.outchan)
+			msch = mp.newStream(ch, name, false)
 			mp.channels[ch] = msch
 			select {
 			case mp.nstreams <- msch:
@@ -300,17 +292,15 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 			if tag == NewStream {
-				mp.ch_lock.Unlock()
 				continue
 			}
 		}
-		mp.ch_lock.Unlock()
 
 		if tag == Close {
-			msch.Close()
-			mp.ch_lock.Lock()
+			close(msch.data_in)
+			mp.chLock.Lock()
 			delete(mp.channels, ch)
-			mp.ch_lock.Unlock()
+			mp.chLock.Unlock()
 			continue
 		}
 
@@ -319,8 +309,8 @@ func (mp *Multiplex) handleIncoming() {
 }
 
 func (mp *Multiplex) shutdown() {
-	mp.ch_lock.Lock()
-	defer mp.ch_lock.Unlock()
+	mp.chLock.Lock()
+	defer mp.chLock.Unlock()
 	for _, s := range mp.channels {
 		s.Close()
 	}
@@ -360,8 +350,7 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	return buf, nil
 }
 
-func EncodeVarint(x uint64) []byte {
-	var buf [10]byte
+func EncodeVarint(buf []byte, x uint64) int {
 	var n int
 	for n = 0; x > 127; n++ {
 		buf[n] = 0x80 | uint8(x&0x7F)
@@ -369,7 +358,7 @@ func EncodeVarint(x uint64) []byte {
 	}
 	buf[n] = uint8(x)
 	n++
-	return buf[0:n]
+	return n
 }
 
 func DecodeVarint(r *bufio.Reader) (x uint64, n int, err error) {
