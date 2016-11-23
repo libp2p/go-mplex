@@ -129,6 +129,25 @@ func (s *Stream) Read(b []byte) (int, error) {
 }
 
 func (s *Stream) Write(b []byte) (int, error) {
+	var written int
+	for written < len(b) {
+		wl := len(b) - written
+		if wl > MaxMessageSize {
+			wl = MaxMessageSize
+		}
+
+		n, err := s.write(b[written : written+wl])
+		if err != nil {
+			return written, err
+		}
+
+		written += n
+	}
+
+	return written, nil
+}
+
+func (s *Stream) write(b []byte) (int, error) {
 	if s.isClosed() {
 		return 0, fmt.Errorf("cannot write to closed stream")
 	}
