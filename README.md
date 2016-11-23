@@ -7,12 +7,11 @@ A super simple stream muxing library compatible with [multiplex](http://github.c
 ```go
 mplex := multiplex.NewMultiplex(mysocket)
 
-s := mplex.NewStream()
+s, _ := mplex.NewStream()
 s.Write([]byte("Hello World!")
 s.Close()
 
-mplex.Serve(func(s *multiplex.Stream) {
-	// echo back everything received
-	io.Copy(s, s)
-})
+os, _ := mplex.Accept()
+// echo back everything received
+io.Copy(os, os)
 ```
