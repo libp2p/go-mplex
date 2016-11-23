@@ -118,7 +118,9 @@ func (s *Stream) Read(b []byte) (int, error) {
 	if n < len(s.extra) {
 		s.extra = s.extra[n:]
 	} else {
-		mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
+		if s.exbuf != nil {
+			mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
+		}
 		s.extra = nil
 		s.exbuf = nil
 	}
@@ -381,6 +383,10 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 
 	if l > uint64(MaxMessageSize) {
 		return nil, fmt.Errorf("message size too large!")
+	}
+
+	if l == 0 {
+		return nil, nil
 	}
 
 	buf := mpool.ByteSlicePool.Get(uint32(l)).([]byte)[:l]
