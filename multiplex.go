@@ -3,6 +3,7 @@ package multiplex
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -242,8 +243,8 @@ func (mp *Multiplex) sendMsg(header uint64, data []byte, dl time.Time) error {
 			return err
 		}
 	}
-	n := EncodeVarint(mp.hdrBuf, header)
-	n += EncodeVarint(mp.hdrBuf[n:], uint64(len(data)))
+	n := binary.PutUvarint(mp.hdrBuf, header)
+	n += binary.PutUvarint(mp.hdrBuf[n:], uint64(len(data)))
 	_, err := mp.con.Write(mp.hdrBuf[:n])
 	if err != nil {
 		return err
@@ -361,7 +362,7 @@ func (mp *Multiplex) shutdown() {
 }
 
 func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
-	h, _, err := DecodeVarint(mp.buf)
+	h, err := binary.ReadUvarint(mp.buf)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -376,7 +377,7 @@ func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
 
 func (mp *Multiplex) readNext() ([]byte, error) {
 	// get length
-	l, _, err := DecodeVarint(mp.buf)
+	l, err := binary.ReadUvarint(mp.buf)
 	if err != nil {
 		return nil, err
 	}
@@ -396,35 +397,4 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf[:n], nil
-}
-
-func EncodeVarint(buf []byte, x uint64) int {
-	var n int
-	for n = 0; x > 127; n++ {
-		buf[n] = 0x80 | uint8(x&0x7F)
-		x >>= 7
-	}
-	buf[n] = uint8(x)
-	n++
-	return n
-}
-
-func DecodeVarint(r *bufio.Reader) (x uint64, n int, err error) {
-	// x, n already 0
-	for shift := uint(0); shift < 64; shift += 7 {
-		val, err := r.ReadByte()
-		if err != nil {
-			return 0, 0, err
-		}
-
-		b := uint64(val)
-		n++
-		x |= (b & 0x7F) << shift
-		if (b & 0x80) == 0 {
-			return x, n, nil
-		}
-	}
-
-	// The number is too large to represent in a 64-bit value.
-	return 0, 0, errors.New("Too large of a number!")
 }
