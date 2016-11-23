@@ -24,11 +24,11 @@ const (
 )
 
 type Stream struct {
-	id      uint64
-	name    string
-	header  uint64
-	data_in chan []byte
-	mp      *Multiplex
+	id     uint64
+	name   string
+	header uint64
+	dataIn chan []byte
+	mp     *Multiplex
 
 	extra []byte
 
@@ -52,12 +52,12 @@ func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
 		hfn = 1
 	}
 	return &Stream{
-		id:      id,
-		name:    name,
-		header:  (id << 3) | hfn,
-		data_in: make(chan []byte, 8),
-		clCh:    make(chan struct{}),
-		mp:      mp,
+		id:     id,
+		name:   name,
+		header: (id << 3) | hfn,
+		dataIn: make(chan []byte, 8),
+		clCh:   make(chan struct{}),
+		mp:     mp,
 	}
 }
 
@@ -67,7 +67,7 @@ func (s *Stream) Name() string {
 
 func (s *Stream) receive(b []byte) {
 	select {
-	case s.data_in <- b:
+	case s.dataIn <- b:
 	case <-s.clCh:
 	}
 }
@@ -93,7 +93,7 @@ func (s *Stream) waitForData(ctx context.Context) error {
 		ctx = dctx
 	}
 	select {
-	case read, ok := <-s.data_in:
+	case read, ok := <-s.dataIn:
 		if !ok {
 			return io.EOF
 		}
@@ -341,7 +341,7 @@ func (mp *Multiplex) handleIncoming() {
 		}
 
 		if tag == Close {
-			close(msch.data_in)
+			close(msch.dataIn)
 			mp.chLock.Lock()
 			delete(mp.channels, ch)
 			mp.chLock.Unlock()
