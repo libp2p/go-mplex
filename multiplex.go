@@ -186,7 +186,7 @@ func (mp *Multiplex) sendErr(err error) {
 }
 
 func (mp *Multiplex) handleIncoming() {
-	defer mp.shutdown()
+	defer mp.Close()
 	for {
 		ch, tag, err := mp.readNextHeader()
 		if err != nil {
@@ -229,14 +229,6 @@ func (mp *Multiplex) handleIncoming() {
 		}
 
 		msch.receive(b)
-	}
-}
-
-func (mp *Multiplex) shutdown() {
-	mp.chLock.Lock()
-	defer mp.chLock.Unlock()
-	for _, s := range mp.channels {
-		s.Close()
 	}
 }
 
