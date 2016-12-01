@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestBasicStreams(t *testing.T) {
@@ -52,6 +53,61 @@ func TestBasicStreams(t *testing.T) {
 	}
 
 	s.Close()
+
+	mpa.Close()
+	mpb.Close()
+}
+
+func TestWriteAfterClose(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	done := make(chan struct{})
+	mes := []byte("Hello world")
+	go func() {
+		s, err := mpb.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = s.Write(mes)
+		if err != nil {
+			return
+		}
+
+		_, err = s.Write(mes)
+		if err != nil {
+			return
+		}
+
+		s.Close()
+
+		close(done)
+	}()
+
+	s, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// wait for writes to complete and close to happen (and be noticed)
+	<-done
+	time.Sleep(time.Millisecond * 50)
+
+	buf := make([]byte, len(mes)*10)
+	n, _ := io.ReadFull(s, buf)
+	if n != len(mes)*2 {
+		t.Fatal("read incorrect amount of data: ", n)
+	}
+
+	// read after close should fail with EOF
+	_, err = s.Read(buf)
+	if err == nil {
+		t.Fatal("read on closed stream should fail")
+	}
 
 	mpa.Close()
 	mpb.Close()

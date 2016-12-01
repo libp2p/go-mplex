@@ -10,8 +10,11 @@ import (
 	"sync"
 	"time"
 
+	logging "github.com/ipfs/go-log"
 	mpool "github.com/jbenet/go-msgio/mpool"
 )
+
+var log = logging.Logger("multiplex")
 
 var MaxMessageSize = 1 << 20
 
@@ -203,32 +206,40 @@ func (mp *Multiplex) handleIncoming() {
 		mp.chLock.Lock()
 		msch, ok := mp.channels[ch]
 		mp.chLock.Unlock()
-		if !ok {
-			var name string
-			if tag == NewStream {
-				name = string(b)
+		switch tag {
+		case NewStream:
+			if ok {
+				fmt.Println("received NewStream message for existing stream")
+				continue
 			}
+
+			name := string(b)
 			msch = mp.newStream(ch, name, false)
+			mp.chLock.Lock()
 			mp.channels[ch] = msch
+			mp.chLock.Unlock()
 			select {
 			case mp.nstreams <- msch:
 			case <-mp.closed:
 				return
 			}
-			if tag == NewStream {
+
+		case Close:
+			if !ok {
 				continue
 			}
-		}
 
-		if tag == Close {
-			close(msch.dataIn)
+			msch.Close()
 			mp.chLock.Lock()
 			delete(mp.channels, ch)
 			mp.chLock.Unlock()
-			continue
+		default:
+			if !ok {
+				fmt.Println("message for non-existant stream, dropping data.")
+				continue
+			}
+			msch.receive(b)
 		}
-
-		msch.receive(b)
 	}
 }
 

@@ -56,8 +56,6 @@ func (s *Stream) waitForData(ctx context.Context) error {
 		s.extra = read
 		s.exbuf = read
 		return nil
-	case <-s.clCh:
-		return io.EOF
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -122,6 +120,12 @@ func (s *Stream) isClosed() bool {
 }
 
 func (s *Stream) Close() error {
+	s.mp.chLock.Lock()
+	delete(s.mp.channels, s.id)
+	s.mp.chLock.Unlock()
+
+	err := s.mp.sendMsg((s.id<<3)|Close, nil, time.Time{})
+
 	s.clLock.Lock()
 	defer s.clLock.Unlock()
 	if s.closed {
@@ -130,7 +134,8 @@ func (s *Stream) Close() error {
 
 	s.closed = true
 	close(s.clCh)
-	return s.mp.sendMsg((s.id<<3)|Close, nil, time.Time{})
+	close(s.dataIn)
+	return err
 }
 
 func (s *Stream) SetDeadline(t time.Time) error {
