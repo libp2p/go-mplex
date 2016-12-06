@@ -97,15 +97,20 @@ func (mp *Multiplex) Close() error {
 		return nil
 	}
 	close(mp.closed)
+	var streams []*Stream
 	mp.chLock.Lock()
-	defer mp.chLock.Unlock()
 	for _, s := range mp.channels {
-		err := s.Close()
-		if err != nil {
-			return err
+		streams = append(streams, s)
+	}
+	mp.chLock.Unlock()
+	var retErr error
+	for _, s := range streams {
+		if err := s.Close(); err != nil {
+			retErr = err
 		}
 	}
-	return nil
+	mp.con.Close()
+	return retErr
 }
 
 func (mp *Multiplex) IsClosed() bool {
@@ -209,7 +214,7 @@ func (mp *Multiplex) handleIncoming() {
 		switch tag {
 		case NewStream:
 			if ok {
-				fmt.Println("received NewStream message for existing stream")
+				log.Debugf("received NewStream message for existing stream: %d", ch)
 				continue
 			}
 
@@ -235,7 +240,7 @@ func (mp *Multiplex) handleIncoming() {
 			mp.chLock.Unlock()
 		default:
 			if !ok {
-				fmt.Println("message for non-existant stream, dropping data.")
+				log.Debugf("message for non-existant stream, dropping data: %d", ch)
 				continue
 			}
 			msch.receive(b)

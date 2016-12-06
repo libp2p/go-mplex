@@ -160,6 +160,34 @@ func TestEcho(t *testing.T) {
 	mpb.Close()
 }
 
+func TestClosing(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	_, err := mpb.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = mpa.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = mpa.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = mpb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+}
+
 func arrComp(a, b []byte) error {
 	msg := ""
 	if len(a) != len(b) {
