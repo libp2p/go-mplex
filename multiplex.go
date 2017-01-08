@@ -64,9 +64,9 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
 	var hfn uint64
 	if initiator {
-		hfn = 2
+		hfn = Initiator
 	} else {
-		hfn = 1
+		hfn = Receiver
 	}
 	return &Stream{
 		id:     id,
