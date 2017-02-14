@@ -26,9 +26,10 @@ type Stream struct {
 	wDeadline time.Time
 	rDeadline time.Time
 
-	clLock sync.Mutex
-	closed bool
-	clCh   chan struct{}
+	clLock       sync.Mutex
+	closedLocal  bool
+	closedRemote bool
+	clCh         chan struct{}
 }
 
 func (s *Stream) Name() string {
@@ -116,25 +117,29 @@ func (s *Stream) write(b []byte) (int, error) {
 func (s *Stream) isClosed() bool {
 	s.clLock.Lock()
 	defer s.clLock.Unlock()
-	return s.closed
+	return s.closedLocal
 }
 
 func (s *Stream) Close() error {
-	s.mp.chLock.Lock()
-	delete(s.mp.channels, s.id)
-	s.mp.chLock.Unlock()
-
 	err := s.mp.sendMsg((s.id<<3)|Close, nil, time.Time{})
 
 	s.clLock.Lock()
-	defer s.clLock.Unlock()
-	if s.closed {
+	if s.closedLocal {
+		s.clLock.Unlock()
 		return nil
 	}
 
-	s.closed = true
+	remote := s.closedRemote
+	s.closedLocal = true
 	close(s.clCh)
-	close(s.dataIn)
+	s.clLock.Unlock()
+
+	if remote {
+		s.mp.chLock.Lock()
+		delete(s.mp.channels, s.id)
+		s.mp.chLock.Unlock()
+	}
+
 	return err
 }
 

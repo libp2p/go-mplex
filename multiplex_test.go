@@ -183,9 +183,9 @@ func TestClosing(t *testing.T) {
 
 	err = mpb.Close()
 	if err != nil {
-		t.Fatal(err)
+		// not an error, the other side is closing the pipe/socket
+		t.Log(err)
 	}
-
 }
 
 func arrComp(a, b []byte) error {

@@ -22,7 +22,7 @@ const (
 	NewStream = iota
 	Receiver
 	Initiator
-	Unknown
+	CloseLocal
 	Close
 )
 
@@ -229,14 +229,22 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
-		case Close:
+		case Close, CloseLocal:
 			if !ok {
 				continue
 			}
 
-			msch.Close()
 			mp.chLock.Lock()
-			delete(mp.channels, ch)
+			s, ok := mp.channels[ch]
+			if ok {
+				if s.closedLocal {
+					delete(mp.channels, ch)
+				}
+				s.clLock.Lock()
+				s.closedRemote = true
+				close(s.dataIn)
+				s.clLock.Unlock()
+			}
 			mp.chLock.Unlock()
 		default:
 			if !ok {
