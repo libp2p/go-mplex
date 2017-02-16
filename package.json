@@ -24,6 +24,6 @@
   "license": "",
   "name": "go-multiplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.2.7"
+  "version": "0.2.8"
 }
 
