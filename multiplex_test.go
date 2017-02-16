@@ -210,7 +210,7 @@ func TestHalfClose(t *testing.T) {
 	}
 
 	if len(buf) != len(mes) {
-		t.Fatal("read wrong amount")
+		t.Fatal("read wrong amount", len(buf), len(mes))
 	}
 
 	if err := arrComp(buf, mes); err != nil {

@@ -29,7 +29,6 @@ type Stream struct {
 	clLock       sync.Mutex
 	closedLocal  bool
 	closedRemote bool
-	clCh         chan struct{}
 }
 
 func (s *Stream) Name() string {
@@ -37,10 +36,14 @@ func (s *Stream) Name() string {
 }
 
 func (s *Stream) receive(b []byte) {
-	select {
-	case s.dataIn <- b:
-	case <-s.clCh:
+	s.clLock.Lock()
+	remoteClosed := s.closedRemote
+	s.clLock.Unlock()
+	if remoteClosed {
+		log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+		return
 	}
+	s.dataIn <- b
 }
 
 func (s *Stream) waitForData(ctx context.Context) error {
@@ -131,7 +134,6 @@ func (s *Stream) Close() error {
 
 	remote := s.closedRemote
 	s.closedLocal = true
-	close(s.clCh)
 	s.clLock.Unlock()
 
 	if remote {

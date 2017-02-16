@@ -73,7 +73,6 @@ func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
 		name:   name,
 		header: (id << 3) | hfn,
 		dataIn: make(chan []byte, 8),
-		clCh:   make(chan struct{}),
 		mp:     mp,
 	}
 }
@@ -235,16 +234,13 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			mp.chLock.Lock()
-			s, ok := mp.channels[ch]
-			if ok {
-				s.clLock.Lock()
-				if s.closedLocal {
-					delete(mp.channels, ch)
-				}
-				s.closedRemote = true
-				close(s.dataIn)
-				s.clLock.Unlock()
+			msch.clLock.Lock()
+			if msch.closedLocal {
+				delete(mp.channels, ch)
 			}
+			msch.closedRemote = true
+			close(msch.dataIn)
+			msch.clLock.Unlock()
 			mp.chLock.Unlock()
 		default:
 			if !ok {
