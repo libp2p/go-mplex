@@ -3,6 +3,7 @@ package multiplex
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"testing"
@@ -155,6 +156,66 @@ func TestEcho(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
+
+	mpa.Close()
+	mpb.Close()
+}
+
+func TestHalfClose(t *testing.T) {
+	a, b := net.Pipe()
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	wait := make(chan struct{})
+	mes := make([]byte, 40960)
+	rand.Read(mes)
+	go func() {
+		s, err := mpb.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		defer s.Close()
+
+		<-wait
+		_, err = s.Write(mes)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	s, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bn, err := s.Write([]byte("foo"))
+	if err == nil {
+		t.Fatal("expected error on write to closed stream")
+	}
+	if bn != 0 {
+		t.Fatal("should not have written any bytes to closed stream")
+	}
+
+	close(wait)
+
+	buf, err := ioutil.ReadAll(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(buf) != len(mes) {
+		t.Fatal("read wrong amount")
+	}
+
+	if err := arrComp(buf, mes); err != nil {
+		t.Fatal(err)
+	}
 
 	mpa.Close()
 	mpb.Close()
