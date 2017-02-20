@@ -29,7 +29,6 @@ const (
 type Multiplex struct {
 	con       net.Conn
 	buf       *bufio.Reader
-	nextID    uint64
 	closed    chan struct{}
 	initiator bool
 
@@ -152,12 +151,17 @@ func (mp *Multiplex) sendMsg(header uint64, data []byte, dl time.Time) error {
 }
 
 func (mp *Multiplex) nextChanID() (out uint64) {
-	if mp.initiator {
-		out = mp.nextID + 1
-	} else {
-		out = mp.nextID
+	for i, _ := range mp.channels {
+		if i > out {
+			out = i
+		}
 	}
-	mp.nextID += 2
+	out += 1
+
+	if mp.initiator && out%2 == 0 {
+		out += 1
+	}
+
 	return
 }
 
