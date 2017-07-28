@@ -249,7 +249,18 @@ func (mp *Multiplex) handleIncoming() {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
 				continue
 			}
-			msch.receive(b)
+			msch.clLock.Lock()
+			remoteClosed := msch.closedRemote
+			msch.clLock.Unlock()
+			if remoteClosed {
+				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+				continue
+			}
+			select {
+			case msch.dataIn <- b:
+			case <-mp.closed:
+				return
+			}
 		}
 	}
 }
