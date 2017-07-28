@@ -249,6 +249,44 @@ func TestClosing(t *testing.T) {
 	}
 }
 
+func TestFuzzCloseStream(t *testing.T) {
+	timer := time.AfterFunc(10*time.Second, func() {
+		// This is really the *only* reliable way to set a timeout on
+		// this test...
+		// Don't add *anything* to this function. The go scheduler acts
+		// a bit funny when it encounters a deadlock...
+		panic("timeout")
+	})
+	defer timer.Stop()
+
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	go func() {
+		for i := 0; i < 100; i++ {
+			s, err := mpb.NewStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			go s.Close()
+			go s.Close()
+		}
+	}()
+
+	for i := 0; i < 100; i++ {
+		_, err := mpa.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func arrComp(a, b []byte) error {
 	msg := ""
 	if len(a) != len(b) {
