@@ -22,7 +22,6 @@ const (
 	NewStream = iota
 	Receiver
 	Initiator
-	CloseLocal
 	Close
 )
 
@@ -228,7 +227,7 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
-		case Close, CloseLocal:
+		case Close:
 			if !ok {
 				continue
 			}
