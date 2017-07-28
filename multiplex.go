@@ -22,7 +22,6 @@ const (
 	NewStream = iota
 	Receiver
 	Initiator
-	CloseLocal
 	Close
 )
 
@@ -228,7 +227,7 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
-		case Close, CloseLocal:
+		case Close:
 			if !ok {
 				continue
 			}
@@ -238,8 +237,10 @@ func (mp *Multiplex) handleIncoming() {
 			if msch.closedLocal {
 				delete(mp.channels, ch)
 			}
-			msch.closedRemote = true
-			close(msch.dataIn)
+			if !msch.closedRemote {
+				msch.closedRemote = true
+				close(msch.dataIn)
+			}
 			msch.clLock.Unlock()
 			mp.chLock.Unlock()
 		default:
@@ -247,7 +248,18 @@ func (mp *Multiplex) handleIncoming() {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
 				continue
 			}
-			msch.receive(b)
+			msch.clLock.Lock()
+			remoteClosed := msch.closedRemote
+			msch.clLock.Unlock()
+			if remoteClosed {
+				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+				continue
+			}
+			select {
+			case msch.dataIn <- b:
+			case <-mp.closed:
+				return
+			}
 		}
 	}
 }
