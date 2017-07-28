@@ -238,8 +238,10 @@ func (mp *Multiplex) handleIncoming() {
 			if msch.closedLocal {
 				delete(mp.channels, ch)
 			}
-			msch.closedRemote = true
-			close(msch.dataIn)
+			if !msch.closedRemote {
+				msch.closedRemote = true
+				close(msch.dataIn)
+			}
 			msch.clLock.Unlock()
 			mp.chLock.Unlock()
 		default:
