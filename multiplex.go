@@ -232,17 +232,25 @@ func (mp *Multiplex) handleIncoming() {
 				continue
 			}
 
-			mp.chLock.Lock()
 			msch.clLock.Lock()
-			if msch.closedLocal {
-				delete(mp.channels, ch)
+
+			if msch.closedRemote {
+				msch.clLock.Unlock()
+				continue
 			}
-			if !msch.closedRemote {
-				msch.closedRemote = true
-				close(msch.dataIn)
-			}
+
+			close(msch.dataIn)
+			msch.closedRemote = true
+
+			cleanup := msch.closedLocal
+
 			msch.clLock.Unlock()
-			mp.chLock.Unlock()
+
+			if cleanup {
+				mp.chLock.Lock()
+				delete(mp.channels, ch)
+				mp.chLock.Unlock()
+			}
 		default:
 			if !ok {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
