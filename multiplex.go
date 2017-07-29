@@ -29,8 +29,10 @@ type Multiplex struct {
 	con       net.Conn
 	buf       *bufio.Reader
 	nextID    uint64
-	closed    chan struct{}
 	initiator bool
+
+	closed       chan struct{}
+	shutdownLock sync.Mutex
 
 	wrLock sync.Mutex
 
@@ -91,16 +93,21 @@ func (m *Multiplex) Accept() (*Stream, error) {
 }
 
 func (mp *Multiplex) Close() error {
+	mp.shutdownLock.Lock()
+	defer mp.shutdownLock.Unlock()
+
 	if mp.IsClosed() {
 		return nil
 	}
 	close(mp.closed)
+
 	var streams []*Stream
 	mp.chLock.Lock()
 	for _, s := range mp.channels {
 		streams = append(streams, s)
 	}
 	mp.chLock.Unlock()
+
 	var retErr error
 	for _, s := range streams {
 		if err := s.Close(); err != nil {

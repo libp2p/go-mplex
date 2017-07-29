@@ -221,6 +221,20 @@ func TestHalfClose(t *testing.T) {
 	mpb.Close()
 }
 
+func TestFuzzCloseConnection(t *testing.T) {
+	a, b := net.Pipe()
+
+	for i := 0; i < 1000; i++ {
+		mpa := NewMultiplex(a, false)
+		mpb := NewMultiplex(b, true)
+
+		go mpa.Close()
+		go mpa.Close()
+
+		mpb.Close()
+	}
+}
+
 func TestClosing(t *testing.T) {
 	a, b := net.Pipe()
 
