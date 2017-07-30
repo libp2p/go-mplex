@@ -261,6 +261,9 @@ func TestClosing(t *testing.T) {
 		// not an error, the other side is closing the pipe/socket
 		t.Log(err)
 	}
+	if len(mpa.channels) > 0 || len(mpb.channels) > 0 {
+		t.Fatal("leaked closed streams")
+	}
 }
 
 func TestFuzzCloseStream(t *testing.T) {
@@ -281,23 +284,53 @@ func TestFuzzCloseStream(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
+	done := make(chan struct{})
+
 	go func() {
-		for i := 0; i < 100; i++ {
-			s, err := mpb.NewStream()
+		streams := make([]*Stream, 100)
+		for i := range streams {
+			var err error
+			streams[i], err = mpb.NewStream()
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			go s.Close()
-			go s.Close()
+			go streams[i].Close()
+			go streams[i].Close()
 		}
+		// Make sure they're closed before we move on.
+		for _, s := range streams {
+			if s == nil {
+				continue
+			}
+			s.Close()
+		}
+		close(done)
 	}()
 
-	for i := 0; i < 100; i++ {
-		_, err := mpa.Accept()
+	streams := make([]*Stream, 100)
+	for i := range streams {
+		var err error
+		streams[i], err = mpa.Accept()
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	<-done
+
+	for _, s := range streams {
+		if s == nil {
+			continue
+		}
+		err := s.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(mpa.channels) > 0 || len(mpb.channels) > 0 {
+		t.Fatal("leaked closed streams")
 	}
 }
 
