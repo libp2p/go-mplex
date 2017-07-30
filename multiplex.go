@@ -18,11 +18,12 @@ var log = logging.Logger("multiplex")
 
 var MaxMessageSize = 1 << 20
 
+var ErrShutdown = errors.New("session shut down")
+
 const (
 	NewStream = iota
 	Receiver
 	Initiator
-	CloseLocal
 	Close
 )
 
@@ -30,15 +31,17 @@ type Multiplex struct {
 	con       net.Conn
 	buf       *bufio.Reader
 	nextID    uint64
-	closed    chan struct{}
 	initiator bool
+
+	closed       chan struct{}
+	shutdown     chan struct{}
+	shutdownErr  error
+	shutdownLock sync.Mutex
 
 	wrLock sync.Mutex
 
 	nstreams chan *Stream
-	errs     chan error
-
-	hdrBuf []byte
+	hdrBuf   []byte
 
 	channels map[uint64]*Stream
 	chLock   sync.Mutex
@@ -51,8 +54,8 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 		buf:       bufio.NewReader(con),
 		channels:  make(map[uint64]*Stream),
 		closed:    make(chan struct{}),
+		shutdown:  make(chan struct{}),
 		nstreams:  make(chan *Stream, 16),
-		errs:      make(chan error),
 		hdrBuf:    make([]byte, 20),
 	}
 
@@ -84,32 +87,29 @@ func (m *Multiplex) Accept() (*Stream, error) {
 			return nil, errors.New("multiplex closed")
 		}
 		return s, nil
-	case err := <-m.errs:
-		return nil, err
 	case <-m.closed:
-		return nil, errors.New("multiplex closed")
+		return nil, m.shutdownErr
 	}
 }
 
 func (mp *Multiplex) Close() error {
-	if mp.IsClosed() {
-		return nil
+	mp.closeNoWait()
+
+	// Wait for the receive loop to finish.
+	<-mp.closed
+
+	return nil
+}
+
+func (mp *Multiplex) closeNoWait() {
+	mp.shutdownLock.Lock()
+	select {
+	case <-mp.shutdown:
+	default:
+		mp.con.Close()
+		close(mp.shutdown)
 	}
-	close(mp.closed)
-	var streams []*Stream
-	mp.chLock.Lock()
-	for _, s := range mp.channels {
-		streams = append(streams, s)
-	}
-	mp.chLock.Unlock()
-	var retErr error
-	for _, s := range streams {
-		if err := s.Close(); err != nil {
-			retErr = err
-		}
-	}
-	mp.con.Close()
-	return retErr
+	mp.shutdownLock.Unlock()
 }
 
 func (mp *Multiplex) IsClosed() bool {
@@ -185,25 +185,39 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	return s, nil
 }
 
-func (mp *Multiplex) sendErr(err error) {
-	select {
-	case mp.errs <- err:
-	case <-mp.closed:
+func (mp *Multiplex) cleanup() {
+	mp.closeNoWait()
+	mp.chLock.Lock()
+	defer mp.chLock.Unlock()
+	for _, msch := range mp.channels {
+		msch.clLock.Lock()
+		if !msch.closedRemote {
+			msch.closedRemote = true
+			// Cancel readers
+			close(msch.dataIn)
+		}
+		msch.closedLocal = true
+		msch.clLock.Unlock()
 	}
+	mp.channels = nil
+	if mp.shutdownErr == nil {
+		mp.shutdownErr = ErrShutdown
+	}
+	close(mp.closed)
 }
 
 func (mp *Multiplex) handleIncoming() {
-	defer mp.Close()
+	defer mp.cleanup()
 	for {
 		ch, tag, err := mp.readNextHeader()
 		if err != nil {
-			mp.sendErr(err)
+			mp.shutdownErr = err
 			return
 		}
 
 		b, err := mp.readNext()
 		if err != nil {
-			mp.sendErr(err)
+			mp.shutdownErr = err
 			return
 		}
 
@@ -224,30 +238,51 @@ func (mp *Multiplex) handleIncoming() {
 			mp.chLock.Unlock()
 			select {
 			case mp.nstreams <- msch:
-			case <-mp.closed:
+			case <-mp.shutdown:
 				return
 			}
 
-		case Close, CloseLocal:
+		case Close:
 			if !ok {
 				continue
 			}
 
-			mp.chLock.Lock()
 			msch.clLock.Lock()
-			if msch.closedLocal {
-				delete(mp.channels, ch)
+
+			if msch.closedRemote {
+				msch.clLock.Unlock()
+				continue
 			}
-			msch.closedRemote = true
+
 			close(msch.dataIn)
+			msch.closedRemote = true
+
+			cleanup := msch.closedLocal
+
 			msch.clLock.Unlock()
-			mp.chLock.Unlock()
+
+			if cleanup {
+				mp.chLock.Lock()
+				delete(mp.channels, ch)
+				mp.chLock.Unlock()
+			}
 		default:
 			if !ok {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
 				continue
 			}
-			msch.receive(b)
+			msch.clLock.Lock()
+			remoteClosed := msch.closedRemote
+			msch.clLock.Unlock()
+			if remoteClosed {
+				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+				continue
+			}
+			select {
+			case msch.dataIn <- b:
+			case <-mp.shutdown:
+				return
+			}
 		}
 	}
 }

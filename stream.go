@@ -35,17 +35,6 @@ func (s *Stream) Name() string {
 	return s.name
 }
 
-func (s *Stream) receive(b []byte) {
-	s.clLock.Lock()
-	remoteClosed := s.closedRemote
-	s.clLock.Unlock()
-	if remoteClosed {
-		log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
-		return
-	}
-	s.dataIn <- b
-}
-
 func (s *Stream) waitForData(ctx context.Context) error {
 	if !s.rDeadline.IsZero() {
 		dctx, cancel := context.WithDeadline(ctx, s.rDeadline)

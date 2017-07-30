@@ -221,6 +221,20 @@ func TestHalfClose(t *testing.T) {
 	mpb.Close()
 }
 
+func TestFuzzCloseConnection(t *testing.T) {
+	a, b := net.Pipe()
+
+	for i := 0; i < 1000; i++ {
+		mpa := NewMultiplex(a, false)
+		mpb := NewMultiplex(b, true)
+
+		go mpa.Close()
+		go mpa.Close()
+
+		mpb.Close()
+	}
+}
+
 func TestClosing(t *testing.T) {
 	a, b := net.Pipe()
 
@@ -246,6 +260,77 @@ func TestClosing(t *testing.T) {
 	if err != nil {
 		// not an error, the other side is closing the pipe/socket
 		t.Log(err)
+	}
+	if len(mpa.channels) > 0 || len(mpb.channels) > 0 {
+		t.Fatal("leaked closed streams")
+	}
+}
+
+func TestFuzzCloseStream(t *testing.T) {
+	timer := time.AfterFunc(10*time.Second, func() {
+		// This is really the *only* reliable way to set a timeout on
+		// this test...
+		// Don't add *anything* to this function. The go scheduler acts
+		// a bit funny when it encounters a deadlock...
+		panic("timeout")
+	})
+	defer timer.Stop()
+
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	done := make(chan struct{})
+
+	go func() {
+		streams := make([]*Stream, 100)
+		for i := range streams {
+			var err error
+			streams[i], err = mpb.NewStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			go streams[i].Close()
+			go streams[i].Close()
+		}
+		// Make sure they're closed before we move on.
+		for _, s := range streams {
+			if s == nil {
+				continue
+			}
+			s.Close()
+		}
+		close(done)
+	}()
+
+	streams := make([]*Stream, 100)
+	for i := range streams {
+		var err error
+		streams[i], err = mpa.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	<-done
+
+	for _, s := range streams {
+		if s == nil {
+			continue
+		}
+		err := s.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(mpa.channels) > 0 || len(mpb.channels) > 0 {
+		t.Fatal("leaked closed streams")
 	}
 }
 
