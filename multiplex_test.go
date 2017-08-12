@@ -266,6 +266,30 @@ func TestClosing(t *testing.T) {
 	}
 }
 
+func TestOpenAfterClose(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := mpb.Accept()
+
+	sa.Close()
+	sb.Close()
+
+	mpa.Close()
+
+	s, err := mpa.NewStream()
+	if err == nil || s != nil {
+		t.Fatal("opened a stream on a closed connection")
+	}
+	mpb.Close()
+}
+
 func TestFuzzCloseStream(t *testing.T) {
 	timer := time.AfterFunc(10*time.Second, func() {
 		// This is really the *only* reliable way to set a timeout on

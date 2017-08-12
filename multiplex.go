@@ -167,6 +167,13 @@ func (mp *Multiplex) NewStream() (*Stream, error) {
 
 func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.chLock.Lock()
+
+	// We could call IsClosed but this is faster (given that we already have
+	// the lock).
+	if mp.channels == nil {
+		return nil, ErrShutdown
+	}
+
 	sid := mp.nextChanID()
 	header := (sid << 3) | NewStream
 
@@ -199,6 +206,9 @@ func (mp *Multiplex) cleanup() {
 		msch.closedLocal = true
 		msch.clLock.Unlock()
 	}
+	// Don't remove this nil assignment. We check if this is nil to check if
+	// the connection is closed when we already have the lock (faster than
+	// checking if the stream is closed).
 	mp.channels = nil
 	if mp.shutdownErr == nil {
 		mp.shutdownErr = ErrShutdown
