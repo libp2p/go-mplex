@@ -21,21 +21,23 @@ id = flag >> 3
 
 ### Flag Values
 ```
-------------------
-| NewStream  | 0 |
-| Receiver   | 1 |
-| Initiator  | 2 |
-| Unknown    | 3 |
-| Close      | 4 |
-------------------
+----------------------
+| NewStream      | 0 |
+| Receiver       | 1 |
+| Initiator      | 2 |
+| CloseReceiver  | 3 |
+| CloseInitiator | 4 |
+| ResetReceiver  | 5 |
+| ResetInitiator | 6 |
+----------------------
 ```
 
 The data segment is length prefixed by another unsigned varint. This results in one message looking like:
 
 ```
 -------------------------------------------------
-| header   |  length  |	data                    |
-| uvarint  |  uvarint | 'length' bytes          |
+| header  | length  | 	data       |
+| uvarint | uvarint | 'length' bytes |
 -------------------------------------------------
 ```
 

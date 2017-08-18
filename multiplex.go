@@ -20,12 +20,12 @@ var MaxMessageSize = 1 << 20
 
 var ErrShutdown = errors.New("session shut down")
 
+// +1 for initiator
 const (
-	NewStream = iota
-	Receiver
-	Initiator
-	Close
-	Reset
+	NewStream = 0
+	Message   = 1
+	Close     = 3
+	Reset     = 5
 )
 
 type Multiplex struct {
@@ -66,18 +66,16 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 }
 
 func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
-	var hfn uint64
+	var i uint64
 	if initiator {
-		hfn = Initiator
-	} else {
-		hfn = Receiver
+		i = 1
 	}
 	return &Stream{
-		id:     id,
-		name:   name,
-		header: (id << 3) | hfn,
-		dataIn: make(chan []byte, 8),
-		mp:     mp,
+		id:        id,
+		name:      name,
+		initiator: i,
+		dataIn:    make(chan []byte, 8),
+		mp:        mp,
 	}
 }
 
@@ -235,6 +233,10 @@ func (mp *Multiplex) handleIncoming() {
 		mp.chLock.Lock()
 		msch, ok := mp.channels[ch]
 		mp.chLock.Unlock()
+
+		// Why the +1s? 1 is added to the tag if the message is sent by an initiator.
+		// While we don't actually care about which side is the
+		// initiator (why should we?) it's the spec...
 		switch tag {
 		case NewStream:
 			if ok {
@@ -253,7 +255,7 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
-		case Reset:
+		case Reset, Reset + 1:
 			if !ok {
 				continue
 			}
@@ -275,7 +277,7 @@ func (mp *Multiplex) handleIncoming() {
 			mp.chLock.Lock()
 			delete(mp.channels, ch)
 			mp.chLock.Unlock()
-		case Close:
+		case Close, Close + 1:
 			if !ok {
 				continue
 			}
@@ -299,10 +301,15 @@ func (mp *Multiplex) handleIncoming() {
 				delete(mp.channels, ch)
 				mp.chLock.Unlock()
 			}
-		case Receiver, Initiator:
+		case Message, Message + 1:
 			if !ok {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
-				go mp.sendMsg(ch<<3|Reset, nil, time.Time{})
+				// Guess initiator status based on the tag.
+				var initiator uint64
+				if tag == Message {
+					initiator = 1
+				}
+				go mp.sendMsg(ch<<3|Reset+initiator, nil, time.Time{})
 				continue
 			}
 			msch.clLock.Lock()
@@ -310,7 +317,7 @@ func (mp *Multiplex) handleIncoming() {
 			msch.clLock.Unlock()
 			if remoteClosed {
 				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
-				go mp.sendMsg(ch<<3|Reset, nil, time.Time{})
+				go mp.sendMsg(ch<<3|Reset+msch.initiator, nil, time.Time{})
 				continue
 			}
 			select {

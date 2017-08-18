@@ -11,11 +11,11 @@ import (
 )
 
 type Stream struct {
-	id     uint64
-	name   string
-	header uint64
-	dataIn chan []byte
-	mp     *Multiplex
+	id        uint64
+	name      string
+	initiator uint64
+	dataIn    chan []byte
+	mp        *Multiplex
 
 	extra []byte
 
@@ -98,7 +98,7 @@ func (s *Stream) write(b []byte) (int, error) {
 		return 0, fmt.Errorf("cannot write to closed stream")
 	}
 
-	err := s.mp.sendMsg(s.header, b, s.wDeadline)
+	err := s.mp.sendMsg(s.id<<3|Message+s.initiator, b, s.wDeadline)
 	if err != nil {
 		return 0, err
 	}
@@ -113,7 +113,7 @@ func (s *Stream) isClosed() bool {
 }
 
 func (s *Stream) Close() error {
-	err := s.mp.sendMsg((s.id<<3)|Close, nil, time.Time{})
+	err := s.mp.sendMsg(s.id<<3|Close+s.initiator, nil, time.Time{})
 
 	s.clLock.Lock()
 	if s.closedLocal {
@@ -144,7 +144,7 @@ func (s *Stream) Reset() error {
 	if !s.closedRemote {
 		close(s.dataIn)
 		// We generally call this to tell the other side to go away. No point in waiting around.
-		go s.mp.sendMsg(s.id<<3|Reset, nil, time.Time{})
+		go s.mp.sendMsg(s.id<<3|Reset+s.initiator, nil, time.Time{})
 	}
 
 	s.closedLocal = true
