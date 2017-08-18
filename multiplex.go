@@ -25,6 +25,7 @@ const (
 	Receiver
 	Initiator
 	Close
+	Reset
 )
 
 type Multiplex struct {
@@ -252,6 +253,28 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
+		case Reset:
+			if !ok {
+				continue
+			}
+			msch.clLock.Lock()
+
+			// Honestly, this check should never be true... It means we've leaked.
+			if msch.closedLocal && msch.closedRemote {
+				msch.clLock.Unlock()
+				continue
+			}
+
+			if !msch.closedRemote {
+				close(msch.dataIn)
+			}
+			msch.closedRemote = true
+			msch.closedLocal = true
+			msch.clLock.Unlock()
+
+			mp.chLock.Lock()
+			delete(mp.channels, ch)
+			mp.chLock.Unlock()
 		case Close:
 			if !ok {
 				continue
@@ -276,9 +299,10 @@ func (mp *Multiplex) handleIncoming() {
 				delete(mp.channels, ch)
 				mp.chLock.Unlock()
 			}
-		default:
+		case Receiver, Initiator:
 			if !ok {
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
+				go mp.sendMsg(ch<<3|Reset, nil, time.Time{})
 				continue
 			}
 			msch.clLock.Lock()
@@ -286,12 +310,18 @@ func (mp *Multiplex) handleIncoming() {
 			msch.clLock.Unlock()
 			if remoteClosed {
 				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+				go mp.sendMsg(ch<<3|Reset, nil, time.Time{})
 				continue
 			}
 			select {
 			case msch.dataIn <- b:
 			case <-mp.shutdown:
 				return
+			}
+		default:
+			log.Debugf("message with unknown header on stream %s", ch)
+			if ok {
+				msch.Reset()
 			}
 		}
 	}

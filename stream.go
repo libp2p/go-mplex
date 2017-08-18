@@ -134,6 +134,31 @@ func (s *Stream) Close() error {
 	return err
 }
 
+func (s *Stream) Reset() error {
+	s.clLock.Lock()
+	if s.closedRemote && s.closedLocal {
+		s.clLock.Unlock()
+		return nil
+	}
+
+	if !s.closedRemote {
+		close(s.dataIn)
+		// We generally call this to tell the other side to go away. No point in waiting around.
+		go s.mp.sendMsg(s.id<<3|Reset, nil, time.Time{})
+	}
+
+	s.closedLocal = true
+	s.closedRemote = true
+
+	s.clLock.Unlock()
+
+	s.mp.chLock.Lock()
+	delete(s.mp.channels, s.id)
+	s.mp.chLock.Unlock()
+
+	return nil
+}
+
 func (s *Stream) SetDeadline(t time.Time) error {
 	s.rDeadline = t
 	s.wDeadline = t

@@ -266,6 +266,58 @@ func TestClosing(t *testing.T) {
 	}
 }
 
+func TestReset(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := mpb.Accept()
+
+	buf := make([]byte, 10)
+
+	sa.Reset()
+	n, err := sa.Read(buf)
+	if n != 0 {
+		t.Fatalf("read %d bytes on reset stream", n)
+	}
+	if err == nil {
+		t.Fatalf("successfully read from reset stream")
+	}
+
+	n, err = sa.Write([]byte("test"))
+	if n != 0 {
+		t.Fatalf("wrote %d bytes on reset stream", n)
+	}
+	if err == nil {
+		t.Fatalf("successfully wrote to reset stream")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	n, err = sb.Write([]byte("test"))
+	if n != 0 {
+		t.Fatalf("wrote %d bytes on reset stream", n)
+	}
+	if err == nil {
+		t.Fatalf("successfully wrote to reset stream")
+	}
+	n, err = sb.Read(buf)
+	if n != 0 {
+		t.Fatalf("read %d bytes on reset stream", n)
+	}
+	if err == nil {
+		t.Fatalf("successfully read from reset stream")
+	}
+}
+
 func TestOpenAfterClose(t *testing.T) {
 	a, b := net.Pipe()
 
