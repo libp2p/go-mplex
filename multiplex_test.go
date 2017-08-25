@@ -10,6 +10,57 @@ import (
 	"time"
 )
 
+func init() {
+	// Let's not slow down the tests too much...
+	ReceiveTimeout = 100 * time.Millisecond
+}
+
+func TestSlowReader(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	mes := []byte("Hello world")
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 100 is large enough that the buffer of the underlying connection will
+	// fill up.
+	for i := 0; i < 100; i++ {
+		_, err = sa.Write(mes)
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		t.Fatal("wrote too many messages")
+	}
+
+	// Read exactly 8.
+	for i := 0; i < 8; i++ {
+		_, err = sb.Read(mes)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = sb.Read(mes)
+	if err == nil {
+		t.Fatal("stream should have been reset")
+	}
+}
+
 func TestBasicStreams(t *testing.T) {
 	a, b := net.Pipe()
 

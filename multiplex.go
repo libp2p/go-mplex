@@ -18,6 +18,11 @@ var log = logging.Logger("multiplex")
 
 var MaxMessageSize = 1 << 20
 
+// Max time to block waiting for a slow reader to read from a stream before
+// resetting it. Preferably, we'd have some form of back-pressure mechanism but
+// we don't have that in this protocol.
+var ReceiveTimeout = 5 * time.Second
+
 var ErrShutdown = errors.New("session shut down")
 
 // +1 for initiator
@@ -217,6 +222,14 @@ func (mp *Multiplex) cleanup() {
 
 func (mp *Multiplex) handleIncoming() {
 	defer mp.cleanup()
+
+	recvTimeout := time.NewTimer(0)
+	defer recvTimeout.Stop()
+
+	if !recvTimeout.Stop() {
+		<-recvTimeout.C
+	}
+
 	for {
 		ch, tag, err := mp.readNextHeader()
 		if err != nil {
@@ -321,8 +334,18 @@ func (mp *Multiplex) handleIncoming() {
 				go mp.sendMsg(ch<<3|Reset+msch.initiator, nil, time.Time{})
 				continue
 			}
+			recvTimeout.Reset(ReceiveTimeout)
 			select {
 			case msch.dataIn <- b:
+				if !recvTimeout.Stop() {
+					<-recvTimeout.C
+				}
+			case <-recvTimeout.C:
+				log.Warningf("timed out receiving message into stream queue.")
+				// Do not do this asynchronously. Otherwise, we
+				// could drop a message, then receive a message,
+				// then reset.
+				msch.Reset()
 			case <-mp.shutdown:
 				return
 			}
