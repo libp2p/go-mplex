@@ -48,17 +48,15 @@ func TestSlowReader(t *testing.T) {
 		t.Fatal("wrote too many messages")
 	}
 
-	// Read exactly 8.
+	// There's a race between reading this stream and processing the reset
+	// so we have to read enough off to drain the queue.
 	for i := 0; i < 8; i++ {
 		_, err = sb.Read(mes)
 		if err != nil {
-			t.Fatal(err)
+			return
 		}
 	}
-	_, err = sb.Read(mes)
-	if err == nil {
-		t.Fatal("stream should have been reset")
-	}
+	t.Fatal("stream should have been reset")
 }
 
 func TestBasicStreams(t *testing.T) {
