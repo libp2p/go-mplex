@@ -29,6 +29,9 @@ type Stream struct {
 	clLock       sync.Mutex
 	closedLocal  bool
 	closedRemote bool
+
+	// Closed when the connection is reset.
+	reset chan struct{}
 }
 
 func (s *Stream) Name() string {
@@ -41,7 +44,12 @@ func (s *Stream) waitForData(ctx context.Context) error {
 		defer cancel()
 		ctx = dctx
 	}
+
 	select {
+	case <-s.reset:
+		// This is the only place where it's safe to return these.
+		s.returnBuffers()
+		return fmt.Errorf("stream reset")
 	case read, ok := <-s.dataIn:
 		if !ok {
 			return io.EOF
@@ -51,6 +59,28 @@ func (s *Stream) waitForData(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (s *Stream) returnBuffers() {
+	if s.exbuf != nil {
+		mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
+		s.exbuf = nil
+		s.extra = nil
+	}
+	for {
+		select {
+		case read, ok := <-s.dataIn:
+			if !ok {
+				return
+			}
+			if read == nil {
+				continue
+			}
+			mpool.ByteSlicePool.Put(uint32(cap(read)), read)
+		default:
+			return
+		}
 	}
 }
 
@@ -142,7 +172,7 @@ func (s *Stream) Reset() error {
 	}
 
 	if !s.closedRemote {
-		close(s.dataIn)
+		close(s.reset)
 		// We generally call this to tell the other side to go away. No point in waiting around.
 		go s.mp.sendMsg(s.id<<3|Reset+s.initiator, nil, time.Time{})
 	}

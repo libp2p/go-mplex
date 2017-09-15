@@ -80,6 +80,7 @@ func (mp *Multiplex) newStream(id uint64, name string, initiator bool) *Stream {
 		name:      name,
 		initiator: i,
 		dataIn:    make(chan []byte, 8),
+		reset:     make(chan struct{}),
 		mp:        mp,
 	}
 }
@@ -205,7 +206,7 @@ func (mp *Multiplex) cleanup() {
 		if !msch.closedRemote {
 			msch.closedRemote = true
 			// Cancel readers
-			close(msch.dataIn)
+			close(msch.reset)
 		}
 		msch.closedLocal = true
 		msch.clLock.Unlock()
@@ -282,7 +283,7 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			if !msch.closedRemote {
-				close(msch.dataIn)
+				close(msch.reset)
 			}
 			msch.closedRemote = true
 			msch.closedLocal = true
@@ -326,6 +327,7 @@ func (mp *Multiplex) handleIncoming() {
 				go mp.sendMsg(ch<<3|Reset+initiator, nil, time.Time{})
 				continue
 			}
+
 			msch.clLock.Lock()
 			remoteClosed := msch.closedRemote
 			msch.clLock.Unlock()
@@ -334,20 +336,23 @@ func (mp *Multiplex) handleIncoming() {
 				go mp.sendMsg(ch<<3|Reset+msch.initiator, nil, time.Time{})
 				continue
 			}
+
 			recvTimeout.Reset(ReceiveTimeout)
 			select {
 			case msch.dataIn <- b:
-				if !recvTimeout.Stop() {
-					<-recvTimeout.C
-				}
+			case <-msch.reset:
 			case <-recvTimeout.C:
 				log.Warningf("timed out receiving message into stream queue.")
 				// Do not do this asynchronously. Otherwise, we
 				// could drop a message, then receive a message,
 				// then reset.
 				msch.Reset()
+				continue
 			case <-mp.shutdown:
 				return
+			}
+			if !recvTimeout.Stop() {
+				<-recvTimeout.C
 			}
 		default:
 			log.Debugf("message with unknown header on stream %s", ch)
