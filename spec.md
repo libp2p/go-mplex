@@ -10,8 +10,12 @@ by other stream multiplexers. Notably, multiplex does not provide backpressure
 at the protocol level, or support half closed streams.
 
 ## Message format
-Every communication in multiplex consists of a header, and a length prefixed data segment.
-The header is an unsigned base128 varint, as defined in the [protocol buffers spec](https://developers.google.com/protocol-buffers/docs/encoding#varints). The lower three bits are the message flags, and the rest of the bits (shifted down by three bits) are the stream ID this message pertains to:
+Every communication in multiplex consists of a header, and a length prefixed
+data segment.  The header is an unsigned base128 varint, as defined in the
+[protocol buffers
+spec](https://developers.google.com/protocol-buffers/docs/encoding#varints).
+The lower three bits are the message flags, and the rest of the bits (shifted
+down by three bits) are the stream ID this message pertains to:
 
 ```
 header = readUvarint()
@@ -32,13 +36,14 @@ id = flag >> 3
 ----------------------
 ```
 
-The data segment is length prefixed by another unsigned varint. This results in one message looking like:
+The data segment is length prefixed by another unsigned varint. This results in
+one message looking like:
 
 ```
--------------------------------------------------
-| header  | length  | 	data       |
-| uvarint | uvarint | 'length' bytes |
--------------------------------------------------
+-----------------------------------------
+| header  | length  | 	data            |
+| uvarint | uvarint | 'length' bytes    |
+-----------------------------------------
 ```
 
 
