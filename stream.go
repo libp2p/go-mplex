@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	mpool "github.com/jbenet/go-msgio/mpool"
+	mpool "github.com/libp2p/go-msgio/mpool"
 )
 
 type Stream struct {
