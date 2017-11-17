@@ -11,7 +11,7 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log"
-	mpool "github.com/jbenet/go-msgio/mpool"
+	mpool "github.com/libp2p/go-msgio/mpool"
 )
 
 var log = logging.Logger("multiplex")
