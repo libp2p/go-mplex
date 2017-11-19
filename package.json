@@ -9,9 +9,9 @@
   "gxDependencies": [
     {
       "author": "whyrusleeping",
-      "hash": "QmWhPvVHRiu7hc8CLAGgnU9UfMEhzWbm51pddJdrVKh3W5",
+      "hash": "QmWBug6eBS7AxRdCDVuSY5CnSit7cS2XnPFYJWqWDumhCG",
       "name": "go-msgio",
-      "version": "0.0.2"
+      "version": "0.0.3"
     },
     {
       "hash": "QmSpJByNKFX1sCsHBEp3R73FL4NF6FnQTEGyNAXHm2GS52",
@@ -24,6 +24,6 @@
   "license": "",
   "name": "go-multiplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.2.15"
+  "version": "0.2.16"
 }
 
