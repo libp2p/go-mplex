@@ -23,7 +23,11 @@ var MaxMessageSize = 1 << 20
 // we don't have that in this protocol.
 var ReceiveTimeout = 5 * time.Second
 
+// ErrShutdown is returned when operating on a shutdown session
 var ErrShutdown = errors.New("session shut down")
+
+// ErrTwoInitiators is returned when both sides think they're the initiator
+var ErrTwoInitiators = errors.New("two initiators")
 
 // +1 for initiator
 const (
@@ -253,6 +257,11 @@ func (mp *Multiplex) handleIncoming() {
 		// initiator (why should we?) it's the spec...
 		switch tag {
 		case NewStream:
+			if mp.initiator == ((ch & 0x1) == 1) {
+				mp.shutdownErr = ErrTwoInitiators
+				return
+			}
+
 			if ok {
 				log.Debugf("received NewStream message for existing stream: %d", ch)
 				continue
