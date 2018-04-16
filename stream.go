@@ -10,12 +10,26 @@ import (
 	mpool "github.com/libp2p/go-msgio/mpool"
 )
 
-type Stream struct {
+// streamID is a convenience type for operating on stream IDs
+type streamID struct {
 	id        uint64
-	name      string
-	initiator uint64
-	dataIn    chan []byte
-	mp        *Multiplex
+	initiator bool
+}
+
+// header computes the header for the given tag
+func (id *streamID) header(tag uint64) uint64 {
+	header := id.id<<3 | tag
+	if !id.initiator {
+		header--
+	}
+	return header
+}
+
+type Stream struct {
+	id     streamID
+	name   string
+	dataIn chan []byte
+	mp     *Multiplex
 
 	extra []byte
 
@@ -128,7 +142,7 @@ func (s *Stream) write(b []byte) (int, error) {
 		return 0, fmt.Errorf("cannot write to closed stream")
 	}
 
-	err := s.mp.sendMsg(s.id<<3|Message+s.initiator, b, s.wDeadline)
+	err := s.mp.sendMsg(s.id.header(messageTag), b, s.wDeadline)
 	if err != nil {
 		return 0, err
 	}
@@ -143,7 +157,7 @@ func (s *Stream) isClosed() bool {
 }
 
 func (s *Stream) Close() error {
-	err := s.mp.sendMsg(s.id<<3|Close+s.initiator, nil, time.Time{})
+	err := s.mp.sendMsg(s.id.header(closeTag), nil, time.Time{})
 
 	s.clLock.Lock()
 	if s.closedLocal {
@@ -174,7 +188,7 @@ func (s *Stream) Reset() error {
 	if !s.closedRemote {
 		close(s.reset)
 		// We generally call this to tell the other side to go away. No point in waiting around.
-		go s.mp.sendMsg(s.id<<3|Reset+s.initiator, nil, time.Time{})
+		go s.mp.sendMsg(s.id.header(resetTag), nil, time.Time{})
 	}
 
 	s.closedLocal = true
