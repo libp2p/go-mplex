@@ -31,7 +31,7 @@ function readWrite (stream) {
 }
 
 const listener = tcp.createServer((socket) => {
-  let muxer = mplex.listener(toPull(socket))
+  let muxer = mplex.listener(toPull.duplex(socket))
   muxer.on('stream', (stream) => {
     readWrite(stream)
   })
