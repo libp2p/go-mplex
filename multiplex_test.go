@@ -88,14 +88,9 @@ func TestBasicStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	buf := make([]byte, len(mes))
-	n, err := s.Read(buf)
+	buf, err := ioutil.ReadAll(s)
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	if n != len(mes) {
-		t.Fatal("read wrong amount")
 	}
 
 	if string(buf) != string(mes) {
