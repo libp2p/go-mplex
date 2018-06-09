@@ -449,7 +449,17 @@ func TestFuzzCloseStream(t *testing.T) {
 		}
 	}
 
-	if len(mpa.channels) > 0 || len(mpb.channels) > 0 {
+	nchannels := 0
+
+	mpa.chLock.Lock()
+	nchannels += len(mpa.channels)
+	mpa.chLock.Unlock()
+
+	mpb.chLock.Lock()
+	nchannels += len(mpb.channels)
+	mpb.chLock.Unlock()
+
+	if nchannels > 0 {
 		t.Fatal("leaked closed streams")
 	}
 }
