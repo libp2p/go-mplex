@@ -14,9 +14,9 @@
       "version": "0.0.3"
     },
     {
-      "hash": "QmRREK2CAZ5Re2Bd9zZFG6FeYDppUWt5cMgsoUEp3ktgSr",
+      "hash": "QmZChCsSt8DctjceaL56Eibc29CVQq4dGKRXC5JRZ6Ppae",
       "name": "go-log",
-      "version": "1.5.5"
+      "version": "1.5.7"
     }
   ],
   "gxVersion": "0.7.0",
@@ -24,6 +24,6 @@
   "license": "",
   "name": "go-multiplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.2.25"
+  "version": "0.2.26"
 }
 
