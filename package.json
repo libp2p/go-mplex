@@ -22,7 +22,7 @@
   "gxVersion": "0.7.0",
   "language": "go",
   "license": "MIT",
-  "name": "go-multiplex",
+  "name": "go-mplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
   "version": "0.2.26"
 }
