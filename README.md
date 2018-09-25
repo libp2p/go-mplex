@@ -1,4 +1,4 @@
-# go-multiplex
+# go-mplex
 
 A super simple stream muxing library implementing [mplex](https://github.com/libp2p/mplex/).
 
