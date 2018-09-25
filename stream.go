@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	mpool "github.com/libp2p/go-msgio/mpool"
+	pool "github.com/libp2p/go-buffer-pool"
 )
 
 // streamID is a convenience type for operating on stream IDs
@@ -78,7 +78,7 @@ func (s *Stream) waitForData(ctx context.Context) error {
 
 func (s *Stream) returnBuffers() {
 	if s.exbuf != nil {
-		mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
+		pool.Put(s.exbuf)
 		s.exbuf = nil
 		s.extra = nil
 	}
@@ -91,7 +91,7 @@ func (s *Stream) returnBuffers() {
 			if read == nil {
 				continue
 			}
-			mpool.ByteSlicePool.Put(uint32(cap(read)), read)
+			pool.Put(read)
 		default:
 			return
 		}
@@ -110,7 +110,7 @@ func (s *Stream) Read(b []byte) (int, error) {
 		s.extra = s.extra[n:]
 	} else {
 		if s.exbuf != nil {
-			mpool.ByteSlicePool.Put(uint32(cap(s.exbuf)), s.exbuf)
+			pool.Put(s.exbuf)
 		}
 		s.extra = nil
 		s.exbuf = nil
