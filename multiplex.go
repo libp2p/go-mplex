@@ -14,7 +14,7 @@ import (
 	mpool "github.com/libp2p/go-msgio/mpool"
 )
 
-var log = logging.Logger("multiplex")
+var log = logging.Logger("mplex")
 
 var MaxMessageSize = 1 << 20
 
