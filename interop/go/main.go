@@ -18,7 +18,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	sess := mplex.NewMultiplex(conn, true)
+	sess := mplex.NewMultiplex(conn)
 	defer sess.Close()
 
 	var wg sync.WaitGroup

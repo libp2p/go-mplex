@@ -42,10 +42,9 @@ const (
 )
 
 type Multiplex struct {
-	con       net.Conn
-	buf       *bufio.Reader
-	nextID    uint64
-	initiator bool
+	con    net.Conn
+	buf    *bufio.Reader
+	nextID uint64
 
 	closed       chan struct{}
 	shutdown     chan struct{}
@@ -61,16 +60,16 @@ type Multiplex struct {
 	chLock   sync.Mutex
 }
 
-func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
+// NewMultiplex constructs a new multiplex session.
+func NewMultiplex(con net.Conn) *Multiplex {
 	mp := &Multiplex{
-		con:       con,
-		initiator: initiator,
-		buf:       bufio.NewReader(con),
-		channels:  make(map[streamID]*Stream),
-		closed:    make(chan struct{}),
-		shutdown:  make(chan struct{}),
-		nstreams:  make(chan *Stream, 16),
-		hdrBuf:    make([]byte, 20),
+		con:      con,
+		buf:      bufio.NewReader(con),
+		channels: make(map[streamID]*Stream),
+		closed:   make(chan struct{}),
+		shutdown: make(chan struct{}),
+		nstreams: make(chan *Stream, 16),
+		hdrBuf:   make([]byte, 20),
 	}
 
 	go mp.handleIncoming()
