@@ -8,15 +8,15 @@
   },
   "gxDependencies": [
     {
-      "author": "whyrusleeping",
-      "hash": "QmWBug6eBS7AxRdCDVuSY5CnSit7cS2XnPFYJWqWDumhCG",
-      "name": "go-msgio",
-      "version": "0.0.3"
-    },
-    {
       "hash": "QmZChCsSt8DctjceaL56Eibc29CVQq4dGKRXC5JRZ6Ppae",
       "name": "go-log",
       "version": "1.5.7"
+    },
+    {
+      "author": "Stebalien",
+      "hash": "QmZRt3dzgDWkjssrmNvBKVNJpLBMafJi5AKpdfMkbfWRu5",
+      "name": "go-buffer-pool",
+      "version": "0.1.2"
     }
   ],
   "gxVersion": "0.7.0",
