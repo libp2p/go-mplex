@@ -55,7 +55,6 @@ type Multiplex struct {
 	wrLock sync.Mutex
 
 	nstreams chan *Stream
-	hdrBuf   []byte
 
 	channels map[streamID]*Stream
 	chLock   sync.Mutex
@@ -70,7 +69,6 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 		closed:    make(chan struct{}),
 		shutdown:  make(chan struct{}),
 		nstreams:  make(chan *Stream, 16),
-		hdrBuf:    make([]byte, 20),
 	}
 
 	go mp.handleIncoming()
@@ -137,26 +135,30 @@ func (mp *Multiplex) sendMsg(header uint64, data []byte, dl time.Time) error {
 			return err
 		}
 	}
-	n := binary.PutUvarint(mp.hdrBuf, header)
-	n += binary.PutUvarint(mp.hdrBuf[n:], uint64(len(data)))
-	_, err := mp.con.Write(mp.hdrBuf[:n])
-	if err != nil {
+	buf := pool.Get(len(data) + 20)
+	defer pool.Put(buf)
+
+	n := 0
+	n += binary.PutUvarint(buf[n:], header)
+	n += binary.PutUvarint(buf[n:], uint64(len(data)))
+	n += copy(buf[n:], data)
+
+	written, err := mp.con.Write(buf[:n])
+	if err != nil && written > 0 {
+		// Bail. We've written partial message and can't do anything
+		// about this.
+		mp.con.Close()
 		return err
 	}
 
-	if len(data) != 0 {
-		_, err = mp.con.Write(data)
-		if err != nil {
-			return err
-		}
-	}
 	if !dl.IsZero() {
-		if err := mp.con.SetWriteDeadline(time.Time{}); err != nil {
-			return err
+		// only return this error if we don't *already* have an error from the write.
+		if err2 := mp.con.SetWriteDeadline(time.Time{}); err == nil && err2 != nil {
+			return err2
 		}
 	}
 
-	return nil
+	return err
 }
 
 func (mp *Multiplex) nextChanID() uint64 {
