@@ -275,6 +275,8 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			name := string(b)
+			pool.Put(b)
+
 			msch = mp.newStream(ch, name)
 			mp.chLock.Lock()
 			mp.channels[ch] = msch
@@ -338,6 +340,9 @@ func (mp *Multiplex) handleIncoming() {
 			}
 		case messageTag:
 			if !ok {
+				// reset stream, return b
+				pool.Put(b)
+
 				// This is a perfectly valid case when we reset
 				// and forget about the stream.
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
@@ -349,6 +354,9 @@ func (mp *Multiplex) handleIncoming() {
 			remoteClosed := msch.closedRemote
 			msch.clLock.Unlock()
 			if remoteClosed {
+				// closed stream, return b
+				pool.Put(b)
+
 				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
 				go mp.sendMsg(msch.id.header(resetTag), nil, time.Time{})
 				continue
@@ -358,7 +366,9 @@ func (mp *Multiplex) handleIncoming() {
 			select {
 			case msch.dataIn <- b:
 			case <-msch.reset:
+				pool.Put(b)
 			case <-recvTimeout.C:
+				pool.Put(b)
 				log.Warningf("timed out receiving message into stream queue.")
 				// Do not do this asynchronously. Otherwise, we
 				// could drop a message, then receive a message,
@@ -366,6 +376,7 @@ func (mp *Multiplex) handleIncoming() {
 				msch.Reset()
 				continue
 			case <-mp.shutdown:
+				pool.Put(b)
 				return
 			}
 			if !recvTimeout.Stop() {
