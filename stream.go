@@ -3,12 +3,12 @@ package multiplex
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-buffer-pool"
+	pool "github.com/libp2p/go-buffer-pool"
+	streammux "github.com/libp2p/go-stream-muxer"
 )
 
 // streamID is a convenience type for operating on stream IDs
@@ -67,7 +67,7 @@ func (s *Stream) waitForData(ctx context.Context) error {
 	case <-s.reset:
 		// This is the only place where it's safe to return these.
 		s.returnBuffers()
-		return fmt.Errorf("stream reset")
+		return streammux.ErrReset
 	case read, ok := <-s.dataIn:
 		if !ok {
 			return io.EOF
@@ -146,8 +146,6 @@ func (s *Stream) write(b []byte) (int, error) {
 		return 0, errors.New("cannot write to closed stream")
 	}
 
-
-
 	wDeadlineCtx, cleanup := func(s *Stream) (context.Context, context.CancelFunc) {
 		if s.wDeadline.IsZero() {
 			return s.closedLocal, nil
@@ -159,7 +157,7 @@ func (s *Stream) write(b []byte) (int, error) {
 	err := s.mp.sendMsg(wDeadlineCtx, s.id.header(messageTag), b)
 
 	if cleanup != nil {
-		cleanup();
+		cleanup()
 	}
 
 	if err != nil {
