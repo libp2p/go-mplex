@@ -20,9 +20,9 @@
     },
     {
       "author": "whyrusleeping",
-      "hash": "QmY9JXR3FupnYAYJWK9aMr9bCpqWKcToQ1tz8DVGTrHpHw",
+      "hash": "QmVtV1y2e8W4eQgzsP6qfSpCCZ6zWYE4m6NzJjB7iswwrT",
       "name": "go-stream-muxer",
-      "version": "3.0.0"
+      "version": "3.1.0"
     }
   ],
   "gxVersion": "0.7.0",
@@ -30,6 +30,6 @@
   "license": "MIT",
   "name": "go-mplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.2.33"
+  "version": "0.2.34"
 }
 
