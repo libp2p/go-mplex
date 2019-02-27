@@ -190,6 +190,7 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	// We could call IsClosed but this is faster (given that we already have
 	// the lock).
 	if mp.channels == nil {
+		mp.chLock.Unlock()
 		return nil, ErrShutdown
 	}
 
