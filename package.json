@@ -30,6 +30,6 @@
   "license": "MIT",
   "name": "go-mplex",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.2.34"
+  "version": "0.2.35"
 }
 
