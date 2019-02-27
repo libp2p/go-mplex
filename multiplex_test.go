@@ -373,6 +373,9 @@ func TestOpenAfterClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	sa.Close()
 	sb.Close()
@@ -383,6 +386,12 @@ func TestOpenAfterClose(t *testing.T) {
 	if err == nil || s != nil {
 		t.Fatal("opened a stream on a closed connection")
 	}
+
+	s, err = mpa.NewStream()
+	if err == nil || s != nil {
+		t.Fatal("opened a stream on a closed connection")
+	}
+
 	mpb.Close()
 }
 
