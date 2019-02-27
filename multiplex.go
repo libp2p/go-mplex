@@ -42,6 +42,7 @@ const (
 	resetTag     = 6
 )
 
+// Multiplex is a mplex session.
 type Multiplex struct {
 	con       net.Conn
 	buf       *bufio.Reader
@@ -61,6 +62,7 @@ type Multiplex struct {
 	chLock   sync.Mutex
 }
 
+// NewMultiplex creates a new multiplexer session.
 func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
 		con:       con,
@@ -82,17 +84,18 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 
 func (mp *Multiplex) newStream(id streamID, name string) (s *Stream) {
 	s = &Stream{
-		id:          id,
-		name:        name,
-		dataIn:      make(chan []byte, 8),
-		reset:       make(chan struct{}),
-		mp:          mp,
+		id:     id,
+		name:   name,
+		dataIn: make(chan []byte, 8),
+		reset:  make(chan struct{}),
+		mp:     mp,
 	}
 
 	s.closedLocal, s.doCloseLocal = context.WithCancel(context.Background())
 	return
 }
 
+// Accept accepts the next stream from the connection.
 func (m *Multiplex) Accept() (*Stream, error) {
 	select {
 	case s, ok := <-m.nstreams:
@@ -105,6 +108,7 @@ func (m *Multiplex) Accept() (*Stream, error) {
 	}
 }
 
+// Close closes the session.
 func (mp *Multiplex) Close() error {
 	mp.closeNoWait()
 
@@ -125,6 +129,7 @@ func (mp *Multiplex) closeNoWait() {
 	mp.shutdownLock.Unlock()
 }
 
+// IsClosed returns true if the session is closed.
 func (mp *Multiplex) IsClosed() bool {
 	select {
 	case <-mp.closed:
@@ -180,16 +185,19 @@ func (mp *Multiplex) nextChanID() uint64 {
 	return out
 }
 
+// NewStream creates a new stream.
 func (mp *Multiplex) NewStream() (*Stream, error) {
 	return mp.NewNamedStream("")
 }
 
+// NewNamedStream creates a new named stream.
 func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.chLock.Lock()
 
 	// We could call IsClosed but this is faster (given that we already have
 	// the lock).
 	if mp.channels == nil {
+		mp.chLock.Unlock()
 		return nil, ErrShutdown
 	}
 
@@ -226,7 +234,7 @@ func (mp *Multiplex) cleanup() {
 			close(msch.reset)
 		}
 
-		msch.doCloseLocal();
+		msch.doCloseLocal()
 		msch.clLock.Unlock()
 	}
 	// Don't remove this nil assignment. We check if this is nil to check if
