@@ -38,8 +38,9 @@ type Stream struct {
 	// for later memory pool freeing
 	exbuf []byte
 
-	wDeadline time.Time
-	rDeadline time.Time
+	deadlineLock sync.Mutex
+	wDeadline    time.Time
+	rDeadline    time.Time
 
 	clLock       sync.Mutex
 	closedRemote bool
@@ -57,11 +58,13 @@ func (s *Stream) Name() string {
 }
 
 func (s *Stream) waitForData(ctx context.Context) error {
+	s.deadlineLock.Lock()
 	if !s.rDeadline.IsZero() {
 		dctx, cancel := context.WithDeadline(ctx, s.rDeadline)
 		defer cancel()
 		ctx = dctx
 	}
+	s.deadlineLock.Unlock()
 
 	select {
 	case <-s.reset:
@@ -146,6 +149,7 @@ func (s *Stream) write(b []byte) (int, error) {
 		return 0, errors.New("cannot write to closed stream")
 	}
 
+	s.deadlineLock.Lock()
 	wDeadlineCtx, cleanup := func(s *Stream) (context.Context, context.CancelFunc) {
 		if s.wDeadline.IsZero() {
 			return s.closedLocal, nil
@@ -153,6 +157,7 @@ func (s *Stream) write(b []byte) (int, error) {
 			return context.WithDeadline(s.closedLocal, s.wDeadline)
 		}
 	}(s)
+	s.deadlineLock.Unlock()
 
 	err := s.mp.sendMsg(wDeadlineCtx, s.id.header(messageTag), b)
 
@@ -224,17 +229,23 @@ func (s *Stream) Reset() error {
 }
 
 func (s *Stream) SetDeadline(t time.Time) error {
+	s.deadlineLock.Lock()
+	defer s.deadlineLock.Unlock()
 	s.rDeadline = t
 	s.wDeadline = t
 	return nil
 }
 
 func (s *Stream) SetReadDeadline(t time.Time) error {
+	s.deadlineLock.Lock()
+	defer s.deadlineLock.Unlock()
 	s.rDeadline = t
 	return nil
 }
 
 func (s *Stream) SetWriteDeadline(t time.Time) error {
+	s.deadlineLock.Lock()
+	defer s.deadlineLock.Unlock()
 	s.wDeadline = t
 	return nil
 }
