@@ -20,3 +20,7 @@ os, _ := mplex.Accept()
 // echo back everything received
 io.Copy(os, os)
 ```
+
+---
+
+The last gx published version of this module was: 0.2.35: QmWGQQ6Tz8AdUpxktLf3zgnVN9Vy8fcWVezZJSU3ZmiANj
