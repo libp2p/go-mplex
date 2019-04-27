@@ -67,7 +67,7 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
 		con:       con,
 		initiator: initiator,
-		buf:       bufio.NewReader(con),
+		buf:       bufio.NewReader(wrapReader(con)),
 		channels:  make(map[streamID]*Stream),
 		closed:    make(chan struct{}),
 		shutdown:  make(chan struct{}),
@@ -451,4 +451,21 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf[:n], nil
+}
+
+// this code is temporary as we are debugging issue #43
+func wrapReader(r io.Reader) io.Reader {
+	return &wrappedReader{r: r}
+}
+
+type wrappedReader struct {
+	r io.Reader
+}
+
+func (r *wrappedReader) Read(b []byte) (int, error) {
+	n, err := r.r.Read(b)
+	if n > len(b) {
+		panic(fmt.Sprintf("oversize read! n: %d len: %d", n, len(b)))
+	}
+	return n, err
 }
