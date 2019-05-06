@@ -381,7 +381,7 @@ func (mp *Multiplex) handleIncoming() {
 				// closed stream, return b
 				pool.Put(b)
 
-				log.Errorf("Received data from remote after stream was closed by them. (len = %d)", len(b))
+				log.Warningf("Received data from remote after stream was closed by them. (len = %d)", len(b))
 				go mp.sendMsg(context.Background(), msch.id.header(resetTag), nil)
 				continue
 			}
