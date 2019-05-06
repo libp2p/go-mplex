@@ -203,21 +203,26 @@ func (s *Stream) Close() error {
 
 func (s *Stream) Reset() error {
 	s.clLock.Lock()
-	isClosed := s.isClosed()
-	if s.closedRemote && isClosed {
+
+	// Don't reset when fully closed.
+	if s.closedRemote && s.isClosed() {
 		s.clLock.Unlock()
 		return nil
 	}
 
-	if !s.closedRemote {
-		close(s.reset)
-		// We generally call this to tell the other side to go away. No point in waiting around.
-		go s.mp.sendMsg(context.Background(), s.id.header(resetTag), nil)
+	// Don't reset twice.
+	select {
+	case <-s.reset:
+		s.clLock.Unlock()
+		return nil
+	default:
 	}
 
+	close(s.reset)
 	s.doCloseLocal()
-
 	s.closedRemote = true
+
+	go s.mp.sendMsg(context.Background(), s.id.header(resetTag), nil)
 
 	s.clLock.Unlock()
 
