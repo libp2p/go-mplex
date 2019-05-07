@@ -8,6 +8,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	streammux "github.com/libp2p/go-stream-muxer"
 )
 
 func init() {
@@ -359,6 +361,38 @@ func TestReset(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatalf("successfully read from reset stream")
+	}
+}
+
+func TestResetAfterEOF(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := mpb.Accept()
+
+	if err := sa.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := sb.Read([]byte{0})
+	if n != 0 || err != io.EOF {
+		t.Fatal(err)
+	}
+
+	sb.Reset()
+
+	n, err = sa.Read([]byte{0})
+	if n != 0 || err != streammux.ErrReset {
+		t.Fatal(err)
 	}
 }
 
