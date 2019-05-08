@@ -180,7 +180,10 @@ func (s *Stream) isClosed() bool {
 }
 
 func (s *Stream) Close() error {
-	err := s.mp.sendMsg(context.Background(), s.id.header(closeTag), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), ResetStreamTimeout)
+	defer cancel()
+
+	err := s.mp.sendMsg(ctx, s.id.header(closeTag), nil)
 
 	if s.isClosed() {
 		return nil
@@ -196,6 +199,11 @@ func (s *Stream) Close() error {
 		s.mp.chLock.Lock()
 		delete(s.mp.channels, s.id)
 		s.mp.chLock.Unlock()
+	}
+
+	if err != nil {
+		log.Errorf("Error closing stream: %s; killing connection", err.Error())
+		s.mp.Close()
 	}
 
 	return err
