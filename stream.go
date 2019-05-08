@@ -222,7 +222,7 @@ func (s *Stream) Reset() error {
 	s.doCloseLocal()
 	s.closedRemote = true
 
-	go s.mp.sendMsg(context.Background(), s.id.header(resetTag), nil)
+	go s.mp.sendResetMsg(s.id.header(resetTag), true)
 
 	s.clLock.Unlock()
 
