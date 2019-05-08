@@ -201,7 +201,7 @@ func (s *Stream) Close() error {
 		s.mp.chLock.Unlock()
 	}
 
-	if err != nil {
+	if err != nil && !s.mp.isShutdown() {
 		log.Errorf("Error closing stream: %s; killing connection", err.Error())
 		s.mp.Close()
 	}
