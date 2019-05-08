@@ -145,15 +145,15 @@ func (mp *Multiplex) IsClosed() bool {
 }
 
 func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) error {
-	if mp.isShutdown() {
-		return ErrShutdown
-	}
-
 	select {
 	case tkn := <-mp.wrTkn:
 		defer func() { mp.wrTkn <- tkn }()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+
+	if mp.isShutdown() {
+		return ErrShutdown
 	}
 
 	dl, hasDl := ctx.Deadline()
