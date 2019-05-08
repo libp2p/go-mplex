@@ -34,8 +34,6 @@ var ErrTwoInitiators = errors.New("two initiators")
 // In this case, we close the connection to be safe.
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
-var bgCtx context.Context
-
 var (
 	NewStreamTimeout   = time.Minute
 	ResetStreamTimeout = time.Minute
@@ -67,13 +65,6 @@ type Multiplex struct {
 
 	channels map[streamID]*Stream
 	chLock   sync.Mutex
-}
-
-func init() {
-	// this context is here to allow us to attach deadlines to messages without
-	// spawning a new goroutine for propagateCancel each time.
-	// we ignore the cancel function because it will never get canceled.
-	bgCtx, _ = context.WithCancel(context.Background())
 }
 
 // NewMultiplex creates a new multiplexer session.
@@ -228,7 +219,7 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.channels[s.id] = s
 	mp.chLock.Unlock()
 
-	ctx, cancel := context.WithTimeout(bgCtx, NewStreamTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), NewStreamTimeout)
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, []byte(name))
@@ -433,7 +424,7 @@ func (mp *Multiplex) handleIncoming() {
 }
 
 func (mp *Multiplex) sendResetMsg(header uint64) {
-	ctx, cancel := context.WithTimeout(bgCtx, ResetStreamTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), ResetStreamTimeout)
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, nil)
