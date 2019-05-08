@@ -423,12 +423,21 @@ func (mp *Multiplex) handleIncoming() {
 	}
 }
 
+func (mp *Multiplex) isShutdown() bool {
+	select {
+	case <-mp.shutdown:
+		return true
+	default:
+		return false
+	}
+}
+
 func (mp *Multiplex) sendResetMsg(header uint64, hard bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), ResetStreamTimeout)
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, nil)
-	if err != nil && !mp.IsClosed() {
+	if err != nil && !mp.isShutdown() {
 		if hard {
 			log.Errorf("error sending reset message: %s; killing connection", err.Error())
 			mp.Close()
