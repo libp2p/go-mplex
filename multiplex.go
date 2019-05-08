@@ -167,8 +167,8 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 	n += copy(buf[n:], data)
 
 	written, err := mp.con.Write(buf[:n])
-	if err != nil && written > 0 {
-		// Bail. We've written partial message and can't do anything
+	if err != nil && (written > 0 || isFatalNetworkError(err)) {
+		// Bail. We've written partial message or it's a fatal error and can't do anything
 		// about this.
 		mp.closeNoWait()
 		return err
@@ -483,4 +483,12 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf[:n], nil
+}
+
+func isFatalNetworkError(err error) bool {
+	nerr, ok := err.(net.Error)
+	if ok {
+		return !(nerr.Timeout() || nerr.Temporary())
+	}
+	return false
 }
