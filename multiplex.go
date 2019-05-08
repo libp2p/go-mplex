@@ -170,7 +170,7 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 	if err != nil && written > 0 {
 		// Bail. We've written partial message and can't do anything
 		// about this.
-		mp.con.Close()
+		mp.closeNoWait()
 		return err
 	}
 
