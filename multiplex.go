@@ -382,11 +382,7 @@ func (mp *Multiplex) handleIncoming() {
 				// This is a perfectly valid case when we reset
 				// and forget about the stream.
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
-				go func() {
-					ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
-					defer cancel()
-					mp.sendMsg(ctx, ch.header(resetTag), nil)
-				}()
+				go mp.sendResetMsg(ch.header(resetTag))
 				continue
 			}
 
@@ -398,11 +394,7 @@ func (mp *Multiplex) handleIncoming() {
 				pool.Put(b)
 
 				log.Warningf("Received data from remote after stream was closed by them. (len = %d)", len(b))
-				go func() {
-					ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
-					defer cancel()
-					mp.sendMsg(ctx, msch.id.header(resetTag), nil)
-				}()
+				go mp.sendResetMsg(msch.id.header(resetTag))
 				continue
 			}
 
@@ -432,6 +424,16 @@ func (mp *Multiplex) handleIncoming() {
 				msch.Reset()
 			}
 		}
+	}
+}
+
+func (mp *Multiplex) sendResetMsg(header uint64) {
+	ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+	defer cancel()
+
+	err := mp.sendMsg(ctx, header, nil)
+	if err != nil {
+		log.Debugf("error sending reset message: %s", err.Error())
 	}
 }
 
