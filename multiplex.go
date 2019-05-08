@@ -34,6 +34,8 @@ var ErrTwoInitiators = errors.New("two initiators")
 // In this case, we close the connection to be safe.
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
+var bgCtx context.Context
+
 // +1 for initiator
 const (
 	newStreamTag = 0
@@ -60,6 +62,13 @@ type Multiplex struct {
 
 	channels map[streamID]*Stream
 	chLock   sync.Mutex
+}
+
+func init() {
+	// this context is here to allow us to attach deadlines to messages without
+	// spawning a new goroutine for propagateCancel each time.
+	// we ignore the cancel function because it will never get canceled.
+	bgCtx, _ = context.WithCancel(context.Background())
 }
 
 // NewMultiplex creates a new multiplexer session.
@@ -214,7 +223,10 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.channels[s.id] = s
 	mp.chLock.Unlock()
 
-	err := mp.sendMsg(context.Background(), header, []byte(name))
+	ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+	defer cancel()
+
+	err := mp.sendMsg(ctx, header, []byte(name))
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +382,11 @@ func (mp *Multiplex) handleIncoming() {
 				// This is a perfectly valid case when we reset
 				// and forget about the stream.
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
-				go mp.sendMsg(context.Background(), ch.header(resetTag), nil)
+				go func() {
+					ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+					defer cancel()
+					mp.sendMsg(ctx, ch.header(resetTag), nil)
+				}()
 				continue
 			}
 
@@ -382,7 +398,11 @@ func (mp *Multiplex) handleIncoming() {
 				pool.Put(b)
 
 				log.Warningf("Received data from remote after stream was closed by them. (len = %d)", len(b))
-				go mp.sendMsg(context.Background(), msch.id.header(resetTag), nil)
+				go func() {
+					ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+					defer cancel()
+					mp.sendMsg(ctx, msch.id.header(resetTag), nil)
+				}()
 				continue
 			}
 
