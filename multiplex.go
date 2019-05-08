@@ -443,7 +443,7 @@ func (mp *Multiplex) sendResetMsg(header uint64, hard bool) {
 	err := mp.sendMsg(ctx, header, nil)
 	if err != nil && !mp.isShutdown() {
 		if hard {
-			log.Errorf("error sending reset message: %s; killing connection", err.Error())
+			log.Warningf("error sending reset message: %s; killing connection", err.Error())
 			mp.Close()
 		} else {
 			log.Debugf("error sending reset message: %s", err.Error())
