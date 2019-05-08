@@ -428,7 +428,7 @@ func (mp *Multiplex) sendResetMsg(header uint64, hard bool) {
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, nil)
-	if err != nil {
+	if err != nil && !mp.IsClosed() {
 		if hard {
 			log.Errorf("error sending reset message: %s; killing connection", err.Error())
 			mp.Close()
