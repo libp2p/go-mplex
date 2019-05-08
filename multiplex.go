@@ -36,6 +36,11 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
 var bgCtx context.Context
 
+var (
+	NewStreamTimeout   = time.Minute
+	ResetStreamTimeout = time.Minute
+)
+
 // +1 for initiator
 const (
 	newStreamTag = 0
@@ -223,7 +228,7 @@ func (mp *Multiplex) NewNamedStream(name string) (*Stream, error) {
 	mp.channels[s.id] = s
 	mp.chLock.Unlock()
 
-	ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+	ctx, cancel := context.WithTimeout(bgCtx, NewStreamTimeout)
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, []byte(name))
@@ -428,7 +433,7 @@ func (mp *Multiplex) handleIncoming() {
 }
 
 func (mp *Multiplex) sendResetMsg(header uint64) {
-	ctx, cancel := context.WithTimeout(bgCtx, time.Minute)
+	ctx, cancel := context.WithTimeout(bgCtx, ResetStreamTimeout)
 	defer cancel()
 
 	err := mp.sendMsg(ctx, header, nil)
