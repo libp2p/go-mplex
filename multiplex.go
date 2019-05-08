@@ -36,7 +36,7 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
 var (
 	NewStreamTimeout   = time.Minute
-	ResetStreamTimeout = time.Minute
+	ResetStreamTimeout = 2 * time.Minute
 )
 
 // +1 for initiator
