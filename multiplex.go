@@ -330,17 +330,15 @@ func (mp *Multiplex) handleIncoming() {
 			msch.clLock.Lock()
 
 			isClosed := msch.isClosed()
-			if isClosed && msch.closedRemote {
-				msch.clLock.Unlock()
-				log.Debug("reset for an already closed stream")
-				continue
-			}
 
 			if !msch.closedRemote {
 				close(msch.reset)
+				msch.closedRemote = true
 			}
-			msch.closedRemote = true
-			msch.doCloseLocal()
+
+			if !isClosed {
+				msch.doCloseLocal()
+			}
 
 			msch.clLock.Unlock()
 
