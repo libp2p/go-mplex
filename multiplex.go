@@ -145,6 +145,14 @@ func (mp *Multiplex) IsClosed() bool {
 }
 
 func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) error {
+	buf := pool.Get(len(data) + 20)
+	defer pool.Put(buf)
+
+	n := 0
+	n += binary.PutUvarint(buf[n:], header)
+	n += binary.PutUvarint(buf[n:], uint64(len(data)))
+	n += copy(buf[n:], data)
+
 	select {
 	case tkn := <-mp.wrTkn:
 		defer func() { mp.wrTkn <- tkn }()
@@ -162,13 +170,6 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 			return err
 		}
 	}
-	buf := pool.Get(len(data) + 20)
-	defer pool.Put(buf)
-
-	n := 0
-	n += binary.PutUvarint(buf[n:], header)
-	n += binary.PutUvarint(buf[n:], uint64(len(data)))
-	n += copy(buf[n:], data)
 
 	written, err := mp.con.Write(buf[:n])
 	if err != nil && (written > 0 || isFatalNetworkError(err)) {
