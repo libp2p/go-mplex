@@ -57,6 +57,19 @@ func (s *Stream) Name() string {
 	return s.name
 }
 
+// tries to preload pending data
+func (s *Stream) preloadData() {
+	select {
+	case read, ok := <-s.dataIn:
+		if !ok {
+			return
+		}
+		s.extra = read
+		s.exbuf = read
+	default:
+	}
+}
+
 func (s *Stream) waitForData(ctx context.Context) error {
 	s.deadlineLock.Lock()
 	if !s.rDeadline.IsZero() {
@@ -106,21 +119,31 @@ func (s *Stream) returnBuffers() {
 }
 
 func (s *Stream) Read(b []byte) (int, error) {
+	select {
+	case <-s.reset:
+		return 0, streammux.ErrReset
+	default:
+	}
 	if s.extra == nil {
 		err := s.waitForData(context.Background())
 		if err != nil {
 			return 0, err
 		}
 	}
-	n := copy(b, s.extra)
-	if n < len(s.extra) {
-		s.extra = s.extra[n:]
-	} else {
-		if s.exbuf != nil {
-			pool.Put(s.exbuf)
+	n := 0
+	for s.extra != nil && n < len(b) {
+		read := copy(b[n:], s.extra)
+		n += read
+		if read < len(s.extra) {
+			s.extra = s.extra[read:]
+		} else {
+			if s.exbuf != nil {
+				pool.Put(s.exbuf)
+			}
+			s.extra = nil
+			s.exbuf = nil
+			s.preloadData()
 		}
-		s.extra = nil
-		s.exbuf = nil
 	}
 	return n, nil
 }
