@@ -329,12 +329,10 @@ func (mp *Multiplex) handleIncoming() {
 			}
 			msch.clLock.Lock()
 
-			// Honestly, this check should never be true... It means we've leaked.
-			// However, this is an error on *our* side so we shouldn't just bail.
 			isClosed := msch.isClosed()
 			if isClosed && msch.closedRemote {
 				msch.clLock.Unlock()
-				log.Errorf("leaked a completely closed stream")
+				log.Debug("reset for an already closed stream")
 				continue
 			}
 
