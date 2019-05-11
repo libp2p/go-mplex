@@ -40,7 +40,7 @@ func TestSlowReader(t *testing.T) {
 
 	// 100 is large enough that the buffer of the underlying connection will
 	// fill up.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10000; i++ {
 		_, err = sa.Write(mes)
 		if err != nil {
 			break
@@ -346,7 +346,7 @@ func TestReset(t *testing.T) {
 		t.Fatalf("successfully wrote to reset stream")
 	}
 
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	n, err = sb.Write([]byte("test"))
 	if n != 0 {
