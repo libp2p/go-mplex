@@ -187,8 +187,8 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 	n := copy(buf, data)
 	pool.Put(data)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -210,13 +210,19 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 				}
 
 				n = copy(buf, data[wr:])
+
+				// we've written some, reset the timer to coalesce the rest
+				if !timer.Stop() {
+					<-timer.C
+				}
+				timer.Reset(100 * time.Millisecond)
 			} else {
 				n += wr
 			}
 
 			pool.Put(data)
 
-		case <-ctx.Done():
+		case <-timer.C:
 			return mp.doWriteMsg(buf[:n])
 
 		case <-mp.shutdown:
