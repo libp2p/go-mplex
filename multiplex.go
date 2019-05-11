@@ -59,7 +59,7 @@ type Multiplex struct {
 	shutdownErr  error
 	shutdownLock sync.Mutex
 
-	wrTkn chan struct{}
+	writeCh chan []byte
 
 	nstreams chan *Stream
 
@@ -76,13 +76,12 @@ func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 		channels:  make(map[streamID]*Stream),
 		closed:    make(chan struct{}),
 		shutdown:  make(chan struct{}),
-		wrTkn:     make(chan struct{}, 1),
+		writeCh:   make(chan []byte, 16),
 		nstreams:  make(chan *Stream, 16),
 	}
 
 	go mp.handleIncoming()
-
-	mp.wrTkn <- struct{}{}
+	go mp.handleOutgoing()
 
 	return mp
 }
@@ -146,7 +145,6 @@ func (mp *Multiplex) IsClosed() bool {
 
 func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) error {
 	buf := pool.Get(len(data) + 20)
-	defer pool.Put(buf)
 
 	n := 0
 	n += binary.PutUvarint(buf[n:], header)
@@ -154,36 +152,87 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 	n += copy(buf[n:], data)
 
 	select {
-	case tkn := <-mp.wrTkn:
-		defer func() { mp.wrTkn <- tkn }()
+	case mp.writeCh <- buf[:n]:
+		return nil
+	case <-mp.shutdown:
+		return ErrShutdown
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
 
+func (mp *Multiplex) handleOutgoing() {
+	for {
+		select {
+		case <-mp.shutdown:
+			return
+
+		case data := <-mp.writeCh:
+			err := mp.writeMsg(data)
+			if err != nil {
+				log.Warningf("Error writing data: %s", err.Error())
+			}
+		}
+	}
+}
+
+func (mp *Multiplex) writeMsg(data []byte) error {
+	if len(data) >= 512 {
+		return mp.doWriteMsg(data)
+	}
+
+	buf := pool.Get(4096)
+	defer pool.Put(buf)
+
+	n := copy(buf, data)
+	pool.Put(data)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	for {
+		select {
+		case data = <-mp.writeCh:
+			wr := copy(buf[n:], data)
+			if wr < len(data) {
+				// we filled the buffer, send it
+				err := mp.doWriteMsg(buf)
+				if err != nil {
+					pool.Put(data)
+					return err
+				}
+
+				if len(data)-wr >= 512 {
+					// the remaining data is not a small write, send it
+					err := mp.doWriteMsg(data[wr:])
+					pool.Put(data)
+					return err
+				}
+
+				n = copy(buf, data[wr:])
+			} else {
+				n += wr
+			}
+
+			pool.Put(data)
+
+		case <-ctx.Done():
+			return mp.doWriteMsg(buf[:n])
+
+		case <-mp.shutdown:
+			return ErrShutdown
+		}
+	}
+}
+
+func (mp *Multiplex) doWriteMsg(data []byte) error {
 	if mp.isShutdown() {
 		return ErrShutdown
 	}
 
-	dl, hasDl := ctx.Deadline()
-	if hasDl {
-		if err := mp.con.SetWriteDeadline(dl); err != nil {
-			return err
-		}
-	}
-
-	written, err := mp.con.Write(buf[:n])
-	if err != nil && (written > 0 || isFatalNetworkError(err)) {
-		// Bail. We've written partial message or it's a fatal error and can't do anything
-		// about this.
+	_, err := mp.con.Write(data)
+	if err != nil {
 		mp.closeNoWait()
-		return err
-	}
-
-	if hasDl {
-		// only return this error if we don't *already* have an error from the write.
-		if err2 := mp.con.SetWriteDeadline(time.Time{}); err == nil && err2 != nil {
-			return err2
-		}
 	}
 
 	return err
