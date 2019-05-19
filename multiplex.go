@@ -59,7 +59,9 @@ type Multiplex struct {
 	shutdownErr  error
 	shutdownLock sync.Mutex
 
-	writeCh chan []byte
+	writeCh         chan []byte
+	writeTimer      *time.Timer
+	writeTimerFired bool
 
 	nstreams chan *Stream
 
@@ -70,14 +72,15 @@ type Multiplex struct {
 // NewMultiplex creates a new multiplexer session.
 func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
-		con:       con,
-		initiator: initiator,
-		buf:       bufio.NewReader(con),
-		channels:  make(map[streamID]*Stream),
-		closed:    make(chan struct{}),
-		shutdown:  make(chan struct{}),
-		writeCh:   make(chan []byte, 16),
-		nstreams:  make(chan *Stream, 16),
+		con:        con,
+		initiator:  initiator,
+		buf:        bufio.NewReader(con),
+		channels:   make(map[streamID]*Stream),
+		closed:     make(chan struct{}),
+		shutdown:   make(chan struct{}),
+		writeCh:    make(chan []byte, 16),
+		writeTimer: time.NewTimer(0),
+		nstreams:   make(chan *Stream, 16),
 	}
 
 	go mp.handleIncoming()
@@ -187,8 +190,13 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 	n := copy(buf, data)
 	pool.Put(data)
 
-	timer := time.NewTimer(100 * time.Millisecond)
-	defer timer.Stop()
+	if !mp.writeTimerFired {
+		if !mp.writeTimer.Stop() {
+			<-mp.writeTimer.C
+		}
+	}
+	mp.writeTimer.Reset(100 * time.Millisecond)
+	mp.writeTimerFired = false
 
 	for {
 		select {
@@ -212,17 +220,18 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 				n = copy(buf, data[wr:])
 
 				// we've written some, reset the timer to coalesce the rest
-				if !timer.Stop() {
-					<-timer.C
+				if !mp.writeTimer.Stop() {
+					<-mp.writeTimer.C
 				}
-				timer.Reset(100 * time.Millisecond)
+				mp.writeTimer.Reset(100 * time.Millisecond)
 			} else {
 				n += wr
 			}
 
 			pool.Put(data)
 
-		case <-timer.C:
+		case <-mp.writeTimer.C:
+			mp.writeTimerFired = true
 			return mp.doWriteMsg(buf[:n])
 
 		case <-mp.shutdown:
