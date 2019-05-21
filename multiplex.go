@@ -37,6 +37,8 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 var (
 	NewStreamTimeout   = time.Minute
 	ResetStreamTimeout = 2 * time.Minute
+
+	WriteCoalesceDelay = 1 * time.Millisecond
 )
 
 // +1 for initiator
@@ -195,7 +197,7 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 			<-mp.writeTimer.C
 		}
 	}
-	mp.writeTimer.Reset(100 * time.Millisecond)
+	mp.writeTimer.Reset(WriteCoalesceDelay)
 	mp.writeTimerFired = false
 
 	for {
@@ -223,7 +225,7 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 				if !mp.writeTimer.Stop() {
 					<-mp.writeTimer.C
 				}
-				mp.writeTimer.Reset(100 * time.Millisecond)
+				mp.writeTimer.Reset(WriteCoalesceDelay)
 			} else {
 				n += wr
 			}
