@@ -38,7 +38,7 @@ var (
 	NewStreamTimeout   = time.Minute
 	ResetStreamTimeout = 2 * time.Minute
 
-	WriteCoalesceDelay = 1 * time.Millisecond
+	WriteCoalesceDelay = 100 * time.Microsecond
 )
 
 // +1 for initiator
