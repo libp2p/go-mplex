@@ -61,9 +61,7 @@ type Multiplex struct {
 	shutdownErr  error
 	shutdownLock sync.Mutex
 
-	writeCh         chan []byte
-	writeTimer      *time.Timer
-	writeTimerFired bool
+	writeCh chan []byte
 
 	nstreams chan *Stream
 
@@ -74,15 +72,14 @@ type Multiplex struct {
 // NewMultiplex creates a new multiplexer session.
 func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
-		con:        con,
-		initiator:  initiator,
-		buf:        bufio.NewReader(con),
-		channels:   make(map[streamID]*Stream),
-		closed:     make(chan struct{}),
-		shutdown:   make(chan struct{}),
-		writeCh:    make(chan []byte, 16),
-		writeTimer: time.NewTimer(0),
-		nstreams:   make(chan *Stream, 16),
+		con:       con,
+		initiator: initiator,
+		buf:       bufio.NewReader(con),
+		channels:  make(map[streamID]*Stream),
+		closed:    make(chan struct{}),
+		shutdown:  make(chan struct{}),
+		writeCh:   make(chan []byte, 16),
+		nstreams:  make(chan *Stream, 16),
 	}
 
 	go mp.handleIncoming()
@@ -167,94 +164,61 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 }
 
 func (mp *Multiplex) handleOutgoing() {
-	for {
-		select {
-		case <-mp.shutdown:
-			return
-
-		case data := <-mp.writeCh:
-			err := mp.writeMsg(data)
-			if err != nil {
-				// the connection is closed by this time
-				log.Warningf("error writing data: %s", err.Error())
-				return
-			}
-		}
+	defer mp.closeNoWait()
+	if err := mp.sendLoop(); err != nil {
+		log.Info("send loop exited with: %s", err)
 	}
 }
 
-func (mp *Multiplex) writeMsg(data []byte) error {
-	if len(data) >= 512 {
-		return mp.doWriteMsg(data)
-	}
+func (mp *Multiplex) sendLoop() error {
+	writeTimer := time.NewTimer(WriteCoalesceDelay)
 
-	buf := pool.Get(4096)
-	defer pool.Put(buf)
-
-	n := copy(buf, data)
-	pool.Put(data)
-
-	if !mp.writeTimerFired {
-		if !mp.writeTimer.Stop() {
-			<-mp.writeTimer.C
-		}
-	}
-	mp.writeTimer.Reset(WriteCoalesceDelay)
-	mp.writeTimerFired = false
+	writer := pool.Writer{W: mp.con}
 
 	for {
+		var data []byte
+
+		// Early exit for shutdown.
+		select {
+		case <-mp.shutdown:
+			return nil
+		default:
+		}
+
+		// Write data if we have some immediately available
 		select {
 		case data = <-mp.writeCh:
-			wr := copy(buf[n:], data)
-			if wr < len(data) {
-				// we filled the buffer, send it
-				err := mp.doWriteMsg(buf)
-				if err != nil {
-					pool.Put(data)
+		default:
+			// Otherwise, wait until the end to the coalesce delay.
+			select {
+			case data = <-mp.writeCh:
+			case <-mp.shutdown:
+				return nil
+			case <-writeTimer.C:
+				// Done waiting, flush and return the write
+				// buffer.
+				if err := writer.Flush(); err != nil {
 					return err
 				}
 
-				if len(data)-wr >= 512 {
-					// the remaining data is not a small write, send it
-					err := mp.doWriteMsg(data[wr:])
-					pool.Put(data)
-					return err
+				// Wait for new data.
+				select {
+				case data = <-mp.writeCh:
+				case <-mp.shutdown:
+					return nil
 				}
 
-				n = copy(buf, data[wr:])
-
-				// we've written some, reset the timer to coalesce the rest
-				if !mp.writeTimer.Stop() {
-					<-mp.writeTimer.C
-				}
-				mp.writeTimer.Reset(WriteCoalesceDelay)
-			} else {
-				n += wr
+				// Start the process over.
+				writeTimer.Reset(WriteCoalesceDelay)
 			}
+		}
 
-			pool.Put(data)
-
-		case <-mp.writeTimer.C:
-			mp.writeTimerFired = true
-			return mp.doWriteMsg(buf[:n])
-
-		case <-mp.shutdown:
-			return ErrShutdown
+		_, err := writer.Write(data)
+		pool.Put(data)
+		if err != nil {
+			return err
 		}
 	}
-}
-
-func (mp *Multiplex) doWriteMsg(data []byte) error {
-	if mp.isShutdown() {
-		return ErrShutdown
-	}
-
-	_, err := mp.con.Write(data)
-	if err != nil {
-		mp.closeNoWait()
-	}
-
-	return err
 }
 
 func (mp *Multiplex) nextChanID() uint64 {
