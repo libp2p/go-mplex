@@ -175,7 +175,9 @@ func (mp *Multiplex) handleOutgoing() {
 		case data := <-mp.writeCh:
 			err := mp.writeMsg(data)
 			if err != nil {
-				log.Warningf("Error writing data: %s", err.Error())
+				// the connection is closed by this time
+				log.Warningf("error writing data: %s", err.Error())
+				return
 			}
 		}
 	}
