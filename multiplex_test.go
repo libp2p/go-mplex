@@ -492,6 +492,8 @@ func TestFuzzCloseStream(t *testing.T) {
 		}
 	}
 
+	time.Sleep(10 * time.Millisecond)
+
 	nchannels := 0
 
 	mpa.chLock.Lock()
