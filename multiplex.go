@@ -37,6 +37,8 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 var (
 	NewStreamTimeout   = time.Minute
 	ResetStreamTimeout = 2 * time.Minute
+
+	WriteCoalesceDelay = 100 * time.Microsecond
 )
 
 // +1 for initiator
@@ -59,7 +61,9 @@ type Multiplex struct {
 	shutdownErr  error
 	shutdownLock sync.Mutex
 
-	wrTkn chan struct{}
+	writeCh         chan []byte
+	writeTimer      *time.Timer
+	writeTimerFired bool
 
 	nstreams chan *Stream
 
@@ -70,19 +74,19 @@ type Multiplex struct {
 // NewMultiplex creates a new multiplexer session.
 func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
-		con:       con,
-		initiator: initiator,
-		buf:       bufio.NewReader(con),
-		channels:  make(map[streamID]*Stream),
-		closed:    make(chan struct{}),
-		shutdown:  make(chan struct{}),
-		wrTkn:     make(chan struct{}, 1),
-		nstreams:  make(chan *Stream, 16),
+		con:        con,
+		initiator:  initiator,
+		buf:        bufio.NewReader(con),
+		channels:   make(map[streamID]*Stream),
+		closed:     make(chan struct{}),
+		shutdown:   make(chan struct{}),
+		writeCh:    make(chan []byte, 16),
+		writeTimer: time.NewTimer(0),
+		nstreams:   make(chan *Stream, 16),
 	}
 
 	go mp.handleIncoming()
-
-	mp.wrTkn <- struct{}{}
+	go mp.handleOutgoing()
 
 	return mp
 }
@@ -146,7 +150,6 @@ func (mp *Multiplex) IsClosed() bool {
 
 func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) error {
 	buf := pool.Get(len(data) + 20)
-	defer pool.Put(buf)
 
 	n := 0
 	n += binary.PutUvarint(buf[n:], header)
@@ -154,36 +157,101 @@ func (mp *Multiplex) sendMsg(ctx context.Context, header uint64, data []byte) er
 	n += copy(buf[n:], data)
 
 	select {
-	case tkn := <-mp.wrTkn:
-		defer func() { mp.wrTkn <- tkn }()
+	case mp.writeCh <- buf[:n]:
+		return nil
+	case <-mp.shutdown:
+		return ErrShutdown
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
 
+func (mp *Multiplex) handleOutgoing() {
+	for {
+		select {
+		case <-mp.shutdown:
+			return
+
+		case data := <-mp.writeCh:
+			err := mp.writeMsg(data)
+			if err != nil {
+				// the connection is closed by this time
+				log.Warningf("error writing data: %s", err.Error())
+				return
+			}
+		}
+	}
+}
+
+func (mp *Multiplex) writeMsg(data []byte) error {
+	if len(data) >= 512 {
+		return mp.doWriteMsg(data)
+	}
+
+	buf := pool.Get(4096)
+	defer pool.Put(buf)
+
+	n := copy(buf, data)
+	pool.Put(data)
+
+	if !mp.writeTimerFired {
+		if !mp.writeTimer.Stop() {
+			<-mp.writeTimer.C
+		}
+	}
+	mp.writeTimer.Reset(WriteCoalesceDelay)
+	mp.writeTimerFired = false
+
+	for {
+		select {
+		case data = <-mp.writeCh:
+			wr := copy(buf[n:], data)
+			if wr < len(data) {
+				// we filled the buffer, send it
+				err := mp.doWriteMsg(buf)
+				if err != nil {
+					pool.Put(data)
+					return err
+				}
+
+				if len(data)-wr >= 512 {
+					// the remaining data is not a small write, send it
+					err := mp.doWriteMsg(data[wr:])
+					pool.Put(data)
+					return err
+				}
+
+				n = copy(buf, data[wr:])
+
+				// we've written some, reset the timer to coalesce the rest
+				if !mp.writeTimer.Stop() {
+					<-mp.writeTimer.C
+				}
+				mp.writeTimer.Reset(WriteCoalesceDelay)
+			} else {
+				n += wr
+			}
+
+			pool.Put(data)
+
+		case <-mp.writeTimer.C:
+			mp.writeTimerFired = true
+			return mp.doWriteMsg(buf[:n])
+
+		case <-mp.shutdown:
+			return ErrShutdown
+		}
+	}
+}
+
+func (mp *Multiplex) doWriteMsg(data []byte) error {
 	if mp.isShutdown() {
 		return ErrShutdown
 	}
 
-	dl, hasDl := ctx.Deadline()
-	if hasDl {
-		if err := mp.con.SetWriteDeadline(dl); err != nil {
-			return err
-		}
-	}
-
-	written, err := mp.con.Write(buf[:n])
-	if err != nil && (written > 0 || isFatalNetworkError(err)) {
-		// Bail. We've written partial message or it's a fatal error and can't do anything
-		// about this.
+	_, err := mp.con.Write(data)
+	if err != nil {
 		mp.closeNoWait()
-		return err
-	}
-
-	if hasDl {
-		// only return this error if we don't *already* have an error from the write.
-		if err2 := mp.con.SetWriteDeadline(time.Time{}); err == nil && err2 != nil {
-			return err2
-		}
 	}
 
 	return err
