@@ -447,7 +447,7 @@ func (mp *Multiplex) handleIncoming() {
 				// This is a perfectly valid case when we reset
 				// and forget about the stream.
 				log.Debugf("message for non-existant stream, dropping data: %d", ch)
-				go mp.sendResetMsg(ch.header(resetTag), false)
+				// go mp.sendResetMsg(ch.header(resetTag), false)
 				continue
 			}
 
@@ -459,7 +459,7 @@ func (mp *Multiplex) handleIncoming() {
 				pool.Put(b)
 
 				log.Warningf("Received data from remote after stream was closed by them. (len = %d)", len(b))
-				go mp.sendResetMsg(msch.id.header(resetTag), false)
+				// go mp.sendResetMsg(msch.id.header(resetTag), false)
 				continue
 			}
 
