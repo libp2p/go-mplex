@@ -429,6 +429,32 @@ func TestOpenAfterClose(t *testing.T) {
 	mpb.Close()
 }
 
+func TestDeadline(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sa.SetDeadline(time.Now().Add(time.Second))
+
+	_, err = sa.Read(make([]byte, 1024))
+	if err != errTimeout {
+		t.Fatal("expected timeout")
+	}
+}
+
 func TestFuzzCloseStream(t *testing.T) {
 	timer := time.AfterFunc(10*time.Second, func() {
 		// This is really the *only* reliable way to set a timeout on
