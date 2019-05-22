@@ -82,7 +82,7 @@ func (s *Stream) waitForData() error {
 		s.exbuf = read
 		return nil
 	case <-s.rDeadline.wait():
-		return context.DeadlineExceeded
+		return errTimeout
 	}
 }
 

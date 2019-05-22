@@ -47,7 +47,7 @@ var (
 type timeout struct{}
 
 func (_ timeout) Error() string {
-	return "timeout"
+	return "i/o deadline exceeded"
 }
 
 func (_ timeout) Temporary() bool {
