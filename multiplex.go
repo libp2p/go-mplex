@@ -35,6 +35,7 @@ var ErrTwoInitiators = errors.New("two initiators")
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
 var errTimeout = errors.New("timeout")
+var errStreamClosed = errors.New("stream closed")
 
 var (
 	NewStreamTimeout   = time.Minute

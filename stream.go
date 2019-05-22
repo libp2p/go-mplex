@@ -248,17 +248,38 @@ func (s *Stream) cancelDeadlines() {
 }
 
 func (s *Stream) SetDeadline(t time.Time) error {
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.closedRemote && s.isClosed() {
+		return errStreamClosed
+	}
+
 	s.rDeadline.set(t)
 	s.wDeadline.set(t)
 	return nil
 }
 
 func (s *Stream) SetReadDeadline(t time.Time) error {
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.closedRemote {
+		return errStreamClosed
+	}
+
 	s.rDeadline.set(t)
 	return nil
 }
 
 func (s *Stream) SetWriteDeadline(t time.Time) error {
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.isClosed() {
+		return errStreamClosed
+	}
+
 	s.wDeadline.set(t)
 	return nil
 }
