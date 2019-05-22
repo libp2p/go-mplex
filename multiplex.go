@@ -407,8 +407,9 @@ func (mp *Multiplex) handleIncoming() {
 			if !isClosed {
 				msch.doCloseLocal()
 			}
-
 			msch.clLock.Unlock()
+
+			msch.cancelDeadlines()
 
 			mp.chLock.Lock()
 			delete(mp.channels, ch)
@@ -435,6 +436,7 @@ func (mp *Multiplex) handleIncoming() {
 			msch.clLock.Unlock()
 
 			if cleanup {
+				msch.cancelDeadlines()
 				mp.chLock.Lock()
 				delete(mp.channels, ch)
 				mp.chLock.Unlock()
