@@ -34,7 +34,7 @@ var ErrTwoInitiators = errors.New("two initiators")
 // In this case, we close the connection to be safe.
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
-var errTimeout = errors.New("timeout")
+var errTimeout = timeout{}
 var errStreamClosed = errors.New("stream closed")
 
 var (
@@ -43,6 +43,20 @@ var (
 
 	WriteCoalesceDelay = 100 * time.Microsecond
 )
+
+type timeout struct{}
+
+func (_ timeout) Error() string {
+	return "timeout"
+}
+
+func (_ timeout) Temporary() bool {
+	return true
+}
+
+func (_ timeout) Timeout() bool {
+	return true
+}
 
 // +1 for initiator
 const (
