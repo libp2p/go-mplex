@@ -251,12 +251,18 @@ func (s *Stream) SetDeadline(t time.Time) error {
 	s.clLock.Lock()
 	defer s.clLock.Unlock()
 
-	if s.closedRemote || s.isClosed() {
+	if s.closedRemote && s.isClosed() {
 		return errStreamClosed
 	}
 
-	s.rDeadline.set(t)
-	s.wDeadline.set(t)
+	if !s.closedRemote {
+		s.rDeadline.set(t)
+	}
+
+	if !s.isClosed() {
+		s.wDeadline.set(t)
+	}
+
 	return nil
 }
 
