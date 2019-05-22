@@ -34,6 +34,8 @@ var ErrTwoInitiators = errors.New("two initiators")
 // In this case, we close the connection to be safe.
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
+var errTimeout = errors.New("timeout")
+
 var (
 	NewStreamTimeout   = time.Minute
 	ResetStreamTimeout = 2 * time.Minute
@@ -164,7 +166,7 @@ func (mp *Multiplex) sendMsg(done <-chan struct{}, header uint64, data []byte) e
 	case <-mp.shutdown:
 		return ErrShutdown
 	case <-done:
-		return errors.New("invalid context")
+		return errTimeout
 	}
 }
 
