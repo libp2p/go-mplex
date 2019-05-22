@@ -38,9 +38,7 @@ type Stream struct {
 	// for later memory pool freeing
 	exbuf []byte
 
-	deadlineLock sync.Mutex
-	wDeadline    time.Time
-	rDeadline    time.Time
+	rDeadline, wDeadline pipeDeadline
 
 	clLock       sync.Mutex
 	closedRemote bool
@@ -70,15 +68,7 @@ func (s *Stream) preloadData() {
 	}
 }
 
-func (s *Stream) waitForData(ctx context.Context) error {
-	s.deadlineLock.Lock()
-	if !s.rDeadline.IsZero() {
-		dctx, cancel := context.WithDeadline(ctx, s.rDeadline)
-		defer cancel()
-		ctx = dctx
-	}
-	s.deadlineLock.Unlock()
-
+func (s *Stream) waitForData() error {
 	select {
 	case <-s.reset:
 		// This is the only place where it's safe to return these.
@@ -91,8 +81,8 @@ func (s *Stream) waitForData(ctx context.Context) error {
 		s.extra = read
 		s.exbuf = read
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-s.rDeadline.wait():
+		return errTimeout
 	}
 }
 
@@ -125,7 +115,7 @@ func (s *Stream) Read(b []byte) (int, error) {
 	default:
 	}
 	if s.extra == nil {
-		err := s.waitForData(context.Background())
+		err := s.waitForData()
 		if err != nil {
 			return 0, err
 		}
@@ -172,21 +162,7 @@ func (s *Stream) write(b []byte) (int, error) {
 		return 0, errors.New("cannot write to closed stream")
 	}
 
-	s.deadlineLock.Lock()
-	wDeadlineCtx, cleanup := func(s *Stream) (context.Context, context.CancelFunc) {
-		if s.wDeadline.IsZero() {
-			return s.closedLocal, nil
-		} else {
-			return context.WithDeadline(s.closedLocal, s.wDeadline)
-		}
-	}(s)
-	s.deadlineLock.Unlock()
-
-	err := s.mp.sendMsg(wDeadlineCtx, s.id.header(messageTag), b)
-
-	if cleanup != nil {
-		cleanup()
-	}
+	err := s.mp.sendMsg(s.wDeadline.wait(), s.id.header(messageTag), b)
 
 	if err != nil {
 		if err == context.Canceled {
@@ -206,7 +182,7 @@ func (s *Stream) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), ResetStreamTimeout)
 	defer cancel()
 
-	err := s.mp.sendMsg(ctx, s.id.header(closeTag), nil)
+	err := s.mp.sendMsg(ctx.Done(), s.id.header(closeTag), nil)
 
 	if s.isClosed() {
 		return nil
@@ -219,6 +195,7 @@ func (s *Stream) Close() error {
 	s.doCloseLocal()
 
 	if remote {
+		s.cancelDeadlines()
 		s.mp.chLock.Lock()
 		delete(s.mp.channels, s.id)
 		s.mp.chLock.Unlock()
@@ -252,6 +229,7 @@ func (s *Stream) Reset() error {
 	close(s.reset)
 	s.doCloseLocal()
 	s.closedRemote = true
+	s.cancelDeadlines()
 
 	go s.mp.sendResetMsg(s.id.header(resetTag), true)
 
@@ -264,24 +242,44 @@ func (s *Stream) Reset() error {
 	return nil
 }
 
+func (s *Stream) cancelDeadlines() {
+	s.rDeadline.set(time.Time{})
+	s.wDeadline.set(time.Time{})
+}
+
 func (s *Stream) SetDeadline(t time.Time) error {
-	s.deadlineLock.Lock()
-	defer s.deadlineLock.Unlock()
-	s.rDeadline = t
-	s.wDeadline = t
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.closedRemote || s.isClosed() {
+		return errStreamClosed
+	}
+
+	s.rDeadline.set(t)
+	s.wDeadline.set(t)
 	return nil
 }
 
 func (s *Stream) SetReadDeadline(t time.Time) error {
-	s.deadlineLock.Lock()
-	defer s.deadlineLock.Unlock()
-	s.rDeadline = t
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.closedRemote {
+		return errStreamClosed
+	}
+
+	s.rDeadline.set(t)
 	return nil
 }
 
 func (s *Stream) SetWriteDeadline(t time.Time) error {
-	s.deadlineLock.Lock()
-	defer s.deadlineLock.Unlock()
-	s.wDeadline = t
+	s.clLock.Lock()
+	defer s.clLock.Unlock()
+
+	if s.isClosed() {
+		return errStreamClosed
+	}
+
+	s.wDeadline.set(t)
 	return nil
 }
