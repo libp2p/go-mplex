@@ -204,7 +204,9 @@ func (mp *Multiplex) handleOutgoing() {
 
 func (mp *Multiplex) writeMsg(data []byte) error {
 	if len(data) >= 512 {
-		return mp.doWriteMsg(data)
+		err := mp.doWriteMsg(data)
+		pool.Put(data)
+		return err
 	}
 
 	buf := pool.Get(4096)
