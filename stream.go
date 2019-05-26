@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p-core/mux"
+
 	pool "github.com/libp2p/go-buffer-pool"
-	streammux "github.com/libp2p/go-stream-muxer"
 )
 
 // streamID is a convenience type for operating on stream IDs
@@ -73,7 +74,7 @@ func (s *Stream) waitForData() error {
 	case <-s.reset:
 		// This is the only place where it's safe to return these.
 		s.returnBuffers()
-		return streammux.ErrReset
+		return mux.ErrReset
 	case read, ok := <-s.dataIn:
 		if !ok {
 			return io.EOF
@@ -111,7 +112,7 @@ func (s *Stream) returnBuffers() {
 func (s *Stream) Read(b []byte) (int, error) {
 	select {
 	case <-s.reset:
-		return 0, streammux.ErrReset
+		return 0, mux.ErrReset
 	default:
 	}
 	if s.extra == nil {
