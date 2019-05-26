@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	streammux "github.com/libp2p/go-stream-muxer"
+	tmux "github.com/libp2p/go-libp2p-core/mux"
 )
 
 func init() {
@@ -391,7 +391,7 @@ func TestResetAfterEOF(t *testing.T) {
 	sb.Reset()
 
 	n, err = sa.Read([]byte{0})
-	if n != 0 || err != streammux.ErrReset {
+	if n != 0 || err != tmux.ErrReset {
 		t.Fatal(err)
 	}
 }
