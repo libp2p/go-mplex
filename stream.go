@@ -206,7 +206,7 @@ func (s *Stream) Close() error {
 	}
 
 	if err != nil && !s.mp.isShutdown() {
-		log.Warningf("Error closing stream: %s; killing connection", err.Error())
+		log.Warnf("Error closing stream: %s; killing connection", err.Error())
 		s.mp.Close()
 	}
 
