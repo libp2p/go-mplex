@@ -8,8 +8,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	tmux "github.com/libp2p/go-libp2p-core/mux"
 )
 
 func init() {
@@ -391,7 +389,7 @@ func TestResetAfterEOF(t *testing.T) {
 	sb.Reset()
 
 	n, err = sa.Read([]byte{0})
-	if n != 0 || err != tmux.ErrReset {
+	if n != 0 || err != ErrStreamReset {
 		t.Fatal(err)
 	}
 }
