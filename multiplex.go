@@ -192,7 +192,11 @@ func (mp *Multiplex) handleOutgoing() {
 			return
 
 		case data := <-mp.writeCh:
-			err := mp.writeMsg(data)
+			// FIXME: https://github.com/libp2p/go-libp2p/issues/644
+			// write coalescing disabled until this can be fixed.
+			//err := mp.writeMsg(data)
+			err := mp.doWriteMsg(data)
+			pool.Put(data)
 			if err != nil {
 				// the connection is closed by this time
 				log.Warnf("error writing data: %s", err.Error())
