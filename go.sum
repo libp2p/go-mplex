@@ -1,3 +1,5 @@
+github.com/cevatbarisyilmaz/lossy v0.2.1 h1:OIGeJYdCHlVIRameppxnuihGOBZzY4jyNYUEQGrpc7Y=
+github.com/cevatbarisyilmaz/lossy v0.2.1/go.mod h1:POUoU6pJUN+KSECSU/gPwCdf+xf9GUlW2azwDL3qtEA=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/gogo/protobuf v1.2.1 h1:/s5zKNz0uPFCZ5hddgPdo2TK2TVrUNMn0OOX8/aZMTE=
