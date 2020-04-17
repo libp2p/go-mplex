@@ -1,17 +1,21 @@
 package multiplex
 
 import (
+	"io"
 	"math/rand"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/cevatbarisyilmaz/lossy"
+	"google.golang.org/grpc/benchmark/latency"
 )
 
-func MakeLinearWriteDistribution() [][]byte {
+func MakeLinearWriteDistribution(b *testing.B) [][]byte {
+	b.Helper()
+
 	n := 1000
 	itms := make([][]byte, n)
 	for i := 0; i < n; i++ {
@@ -20,7 +24,9 @@ func MakeLinearWriteDistribution() [][]byte {
 	return itms
 }
 
-func MakeSmallPacketDistribution() [][]byte {
+func MakeSmallPacketDistribution(b *testing.B) [][]byte {
+	b.Helper()
+
 	n := 1000
 	itms := make([][]byte, n)
 	i := 0
@@ -35,37 +41,64 @@ func MakeSmallPacketDistribution() [][]byte {
 }
 
 func BenchmarkSmallPackets(b *testing.B) {
-	msgs := MakeSmallPacketDistribution()
+	msgs := MakeSmallPacketDistribution(b)
 	benchmarkPackets(b, msgs)
 }
 
 func BenchmarkSlowConnSmallPackets(b *testing.B) {
-	msgs := MakeSmallPacketDistribution()
-	pa, pb := net.Pipe()
-	la := lossy.NewConn(pa, 100*1024, 30*time.Millisecond, 100*time.Millisecond, 0.0, 48)
+	msgs := MakeSmallPacketDistribution(b)
+	slowNetwork := latency.Network{
+		Kbps:    100,
+		Latency: 30 * time.Millisecond,
+		MTU:     1500,
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var lb net.Conn
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		b.Error(err)
+	}
+	slowL := slowNetwork.Listener(l)
+	go func() {
+		defer wg.Done()
+		lb, _ = slowL.Accept()
+		return
+	}()
+	dialer := slowNetwork.Dialer(net.Dial)
+	la, err := dialer("tcp4", slowL.Addr().String())
+	if err != nil {
+		b.Error(err)
+	}
+	defer la.Close()
+	wg.Wait()
+	defer lb.Close()
 	mpa := NewMultiplex(la, false)
-	mpb := NewMultiplex(pb, true)
-	benchmarkPacketsWithConn(b, msgs, mpa, mpb)
+	mpb := NewMultiplex(lb, true)
+	defer mpa.Close()
+	defer mpb.Close()
+	benchmarkPacketsWithConn(b, 1, msgs, mpa, mpb)
 }
 
 func BenchmarkLinearPackets(b *testing.B) {
-	msgs := MakeLinearWriteDistribution()
+	msgs := MakeLinearWriteDistribution(b)
 	benchmarkPackets(b, msgs)
 }
 
 func benchmarkPackets(b *testing.B, msgs [][]byte) {
 	pa, pb := net.Pipe()
+	defer pa.Close()
+	defer pb.Close()
 	mpa := NewMultiplex(pa, false)
 	mpb := NewMultiplex(pb, true)
-	benchmarkPacketsWithConn(b, msgs, mpa, mpb)
-}
-
-func benchmarkPacketsWithConn(b *testing.B, msgs [][]byte, mpa, mpb *Multiplex) {
 	defer mpa.Close()
 	defer mpb.Close()
+	benchmarkPacketsWithConn(b, 1, msgs, mpa, mpb)
+}
 
+func benchmarkPacketsWithConn(b *testing.B, parallelism int, msgs [][]byte, mpa, mpb *Multiplex) {
 	streamPairs := make([][]*Stream, 0)
-	for i := 0; i < 64; i++ {
+	for i := 0; i < parallelism*runtime.GOMAXPROCS(0); i++ {
 		sa, err := mpa.NewStream()
 		if err != nil {
 			b.Error(err)
@@ -78,14 +111,12 @@ func benchmarkPacketsWithConn(b *testing.B, msgs [][]byte, mpa, mpb *Multiplex) 
 	}
 
 	receivedBytes := uint64(0)
+	sentBytes := uint64(0)
 	idx := int32(0)
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
-		localIdx := atomic.AddInt32(&idx, 1)
-		if localIdx >= 64 {
-			panic("parallelism running into unallocated streams.")
-		}
+		localIdx := atomic.AddInt32(&idx, 1) - 1
 		localA := streamPairs[localIdx][0]
 		localB := streamPairs[localIdx][1]
 
@@ -97,7 +128,10 @@ func benchmarkPacketsWithConn(b *testing.B, msgs [][]byte, mpa, mpb *Multiplex) 
 
 			for {
 				n, err := localB.Read(receiveBuf)
-				if n == 0 || err != nil {
+				if err != nil && err != io.EOF {
+					b.Error(err)
+				}
+				if n == 0 || err == io.EOF {
 					return
 				}
 				atomic.AddUint64(&receivedBytes, uint64(n))
@@ -106,14 +140,22 @@ func benchmarkPacketsWithConn(b *testing.B, msgs [][]byte, mpa, mpb *Multiplex) 
 
 		i := 0
 		for {
-			_, _ = localA.Write(msgs[i])
+			n, err := localA.Write(msgs[i])
+			atomic.AddUint64(&sentBytes, uint64(n))
+			if err != nil && err != io.EOF {
+				b.Error(err)
+			}
 			i = (i + 1) % 1000
 			if !pb.Next() {
 				break
 			}
 		}
 		localA.Close()
+		b.StopTimer()
 		wg.Wait()
 	})
+	if sentBytes != receivedBytes {
+		b.Fatal("sent != received", sentBytes, receivedBytes)
+	}
 	b.SetBytes(int64(receivedBytes))
 }
