@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p-core/test"
 	"google.golang.org/grpc/benchmark/latency"
 )
 
@@ -38,6 +39,88 @@ func MakeSmallPacketDistribution(b *testing.B) [][]byte {
 	}
 	rand.Shuffle(n, func(i, j int) { itms[i], itms[j] = itms[j], itms[i] })
 	return itms
+}
+
+func TestSmallPackets(t *testing.T) {
+	slowdown, err := test.FindNetworkLimit(testSmallPackets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slowdown > 0.01 {
+		t.Fatalf("Slowdown from mplex was >1%%: %f", slowdown)
+	}
+}
+
+func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
+	msgs := MakeSmallPacketDistribution(b)
+	mpa := NewMultiplex(n1, false)
+	mpb := NewMultiplex(n2, true)
+	mp := runtime.GOMAXPROCS(0)
+	runtime.GOMAXPROCS(mp)
+
+	streamPairs := make([][]*Stream, 0)
+	for i := 0; i < mp; i++ {
+		sa, err := mpa.NewStream()
+		if err != nil {
+			b.Error(err)
+		}
+		sb, err := mpb.Accept()
+		if err != nil {
+			b.Error(err)
+		}
+		streamPairs = append(streamPairs, []*Stream{sa, sb})
+	}
+
+	receivedBytes := uint64(0)
+	sentBytes := uint64(0)
+	idx := int32(0)
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		localIdx := atomic.AddInt32(&idx, 1) - 1
+		localA := streamPairs[localIdx][0]
+		localB := streamPairs[localIdx][1]
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			receiveBuf := make([]byte, 2048)
+
+			for {
+				n, err := localB.Read(receiveBuf)
+				if err != nil && err != io.EOF {
+					b.Error(err)
+				}
+				if n == 0 || err == io.EOF {
+					return
+				}
+				atomic.AddUint64(&receivedBytes, uint64(n))
+			}
+		}()
+
+		i := 0
+		for {
+			n, err := localA.Write(msgs[i])
+			atomic.AddUint64(&sentBytes, uint64(n))
+			if err != nil && err != io.EOF {
+				b.Error(err)
+			}
+			i = (i + 1) % 1000
+			if !pb.Next() {
+				break
+			}
+		}
+		localA.Close()
+		b.StopTimer()
+		wg.Wait()
+	})
+	if sentBytes != receivedBytes {
+		b.Fatal("sent != received", sentBytes, receivedBytes)
+	}
+	b.SetBytes(int64(receivedBytes))
+	defer mpa.Close()
+	defer mpb.Close()
 }
 
 func BenchmarkSmallPackets(b *testing.B) {
