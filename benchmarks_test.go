@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-libp2p-core/test"
+	netbench "github.com/libp2p/go-libp2p-testing/net"
 	"google.golang.org/grpc/benchmark/latency"
 )
 
@@ -42,7 +42,11 @@ func MakeSmallPacketDistribution(b *testing.B) [][]byte {
 }
 
 func TestSmallPackets(t *testing.T) {
-	slowdown, err := test.FindNetworkLimit(testSmallPackets)
+	kbps, lat, err := netbench.FindNetworkLimit(testSmallPackets, 0.5)
+	if err != nil {
+		t.Skip()
+	}
+	slowdown, err := netbench.ParallelismSlowdown(testSmallPackets, kbps, lat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +80,13 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 	idx := int32(0)
 	b.ResetTimer()
 
+	var wg sync.WaitGroup
+
 	b.RunParallel(func(pb *testing.PB) {
 		localIdx := atomic.AddInt32(&idx, 1) - 1
 		localA := streamPairs[localIdx][0]
 		localB := streamPairs[localIdx][1]
 
-		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -112,9 +117,10 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 			}
 		}
 		localA.Close()
-		b.StopTimer()
-		wg.Wait()
 	})
+	b.StopTimer()
+	wg.Wait()
+
 	if sentBytes != receivedBytes {
 		b.Fatal("sent != received", sentBytes, receivedBytes)
 	}
