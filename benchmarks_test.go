@@ -125,8 +125,8 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 		b.Fatal("sent != received", sentBytes, receivedBytes)
 	}
 	b.SetBytes(int64(receivedBytes))
-	defer mpa.Close()
-	defer mpb.Close()
+	mpa.Close()
+	mpb.Close()
 }
 
 func BenchmarkSmallPackets(b *testing.B) {
@@ -151,8 +151,10 @@ func BenchmarkSlowConnSmallPackets(b *testing.B) {
 	slowL := slowNetwork.Listener(l)
 	go func() {
 		defer wg.Done()
-		lb, _ = slowL.Accept()
-		return
+		lb, err = slowL.Accept()
+		if err != nil {
+			b.Error(err)
+		}
 	}()
 	dialer := slowNetwork.Dialer(net.Dial)
 	la, err := dialer("tcp4", slowL.Addr().String())
