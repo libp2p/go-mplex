@@ -13,6 +13,7 @@ import (
 
 	logging "github.com/ipfs/go-log"
 	pool "github.com/libp2p/go-buffer-pool"
+	"github.com/multiformats/go-varint"
 )
 
 var log = logging.Logger("mplex")
@@ -545,7 +546,7 @@ func (mp *Multiplex) sendResetMsg(header uint64, hard bool) {
 }
 
 func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
-	h, err := binary.ReadUvarint(mp.buf)
+	h, err := varint.ReadUvarint(mp.buf)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -560,7 +561,7 @@ func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
 
 func (mp *Multiplex) readNext() ([]byte, error) {
 	// get length
-	l, err := binary.ReadUvarint(mp.buf)
+	l, err := varint.ReadUvarint(mp.buf)
 	if err != nil {
 		return nil, err
 	}
