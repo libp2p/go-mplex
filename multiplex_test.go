@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -205,6 +207,53 @@ func TestEcho(t *testing.T) {
 	mpb.Close()
 }
 
+func TestFullClose(t *testing.T) {
+	a, b := net.Pipe()
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	mes := make([]byte, 40960)
+	rand.Read(mes)
+	s, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	{
+		s2, err := mpb.Accept()
+		if err != nil {
+			t.Error(err)
+		}
+
+		_, err = s.Write(mes)
+		if err != nil {
+			t.Error(err)
+		}
+		s2.Close()
+	}
+
+	err = s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := s.Write([]byte("foo")); err != ErrStreamClosed {
+		t.Fatal("expected stream closed error on write to closed stream, got", err)
+	} else if n != 0 {
+		t.Fatal("should not have written any bytes to closed stream")
+	}
+
+	// We closed for reading, this should fail.
+	if n, err := s.Read([]byte{0}); err != ErrStreamClosed {
+		t.Fatal("expected stream closed error on read from closed stream, got", err)
+	} else if n != 0 {
+		t.Fatal("should not have read any bytes from closed stream, got", n)
+	}
+
+	mpa.Close()
+	mpb.Close()
+}
+
 func TestHalfClose(t *testing.T) {
 	a, b := net.Pipe()
 	mpa := NewMultiplex(a, false)
@@ -216,15 +265,19 @@ func TestHalfClose(t *testing.T) {
 	go func() {
 		s, err := mpb.Accept()
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 
 		defer s.Close()
 
+		if err := s.CloseRead(); err != nil {
+			t.Error(err)
+		}
+
 		<-wait
 		_, err = s.Write(mes)
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 	}()
 
@@ -232,8 +285,9 @@ func TestHalfClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer s.Close()
 
-	err = s.Close()
+	err = s.CloseWrite()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +416,184 @@ func TestReset(t *testing.T) {
 	}
 }
 
+func TestCancelRead(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sa.Reset()
+
+	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sb.Reset()
+
+	// spin off a read
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := sa.Read([]byte{0})
+		if err != ErrStreamClosed {
+			t.Error(err)
+		}
+	}()
+	// give it a chance to start.
+	time.Sleep(time.Millisecond)
+
+	// cancel it.
+	err = sa.CloseRead()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// It should be canceled.
+	<-done
+
+	// Writing should still succeed.
+	_, err = sa.Write([]byte("foo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sa.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Data should still be sent.
+	buf, err := ioutil.ReadAll(sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "foo" {
+		t.Fatalf("expected foo, got %#v", err)
+	}
+}
+
+func TestCancelWrite(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sa.Reset()
+
+	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sb.Reset()
+
+	// spin off a read
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			_, err := sa.Write([]byte("foo"))
+			if err != nil {
+				if err != ErrStreamClosed {
+					t.Error("unexpected error", err)
+				}
+				return
+			}
+		}
+	}()
+	// give it a chance to fill up.
+	time.Sleep(time.Millisecond)
+
+	go func() {
+		defer wg.Done()
+		// close it.
+		err := sa.CloseWrite()
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+	_, err = ioutil.ReadAll(sb)
+	if err != nil {
+		t.Fatalf("expected stream to be closed correctly")
+	}
+
+	// It should be canceled.
+	wg.Wait()
+
+	// Reading should still succeed.
+	_, err = sb.Write([]byte("bar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Data should still be sent.
+	buf, err := ioutil.ReadAll(sa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "bar" {
+		t.Fatalf("expected foo, got %#v", err)
+	}
+}
+
+func TestCancelReadAfterWrite(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	defer mpa.Close()
+	defer mpb.Close()
+
+	sa, err := mpa.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sa.Reset()
+
+	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sb.Reset()
+
+	// Write small messages till we would block.
+	sa.SetWriteDeadline(time.Now().Add(time.Millisecond))
+	for {
+		_, err = sa.Write([]byte("foo"))
+		if err != nil {
+			if os.IsTimeout(err) {
+				break
+			} else {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Cancel inbound reads.
+	sb.CloseRead()
+	// We shouldn't read anything.
+	n, err := sb.Read([]byte{0})
+	if n != 0 || err != ErrStreamClosed {
+		t.Fatal("got data", err)
+	}
+}
+
 func TestResetAfterEOF(t *testing.T) {
 	a, b := net.Pipe()
 
@@ -377,7 +609,7 @@ func TestResetAfterEOF(t *testing.T) {
 	}
 	sb, err := mpb.Accept()
 
-	if err := sa.Close(); err != nil {
+	if err := sa.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
 

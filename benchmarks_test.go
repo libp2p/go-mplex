@@ -90,6 +90,7 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer localB.Close()
 			receiveBuf := make([]byte, 2048)
 
 			for {
@@ -103,7 +104,7 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 				atomic.AddUint64(&receivedBytes, uint64(n))
 			}
 		}()
-
+		defer localA.Close()
 		i := 0
 		for {
 			n, err := localA.Write(msgs[i])
@@ -116,7 +117,6 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 				break
 			}
 		}
-		localA.Close()
 	})
 	b.StopTimer()
 	wg.Wait()
