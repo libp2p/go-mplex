@@ -50,7 +50,7 @@ func TestSmallPackets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slowdown > 0.15 {
+	if slowdown > 0.15 && !raceEnabled {
 		t.Fatalf("Slowdown from mplex was >15%%: %f", slowdown)
 	}
 }
