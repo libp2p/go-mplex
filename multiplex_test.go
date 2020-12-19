@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -28,7 +29,7 @@ func TestSlowReader(t *testing.T) {
 
 	mes := []byte("Hello world")
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestBasicStreams(t *testing.T) {
 		}
 	}()
 
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +104,32 @@ func TestBasicStreams(t *testing.T) {
 
 	mpa.Close()
 	mpb.Close()
+}
+
+func TestOpenStreamDeadline(t *testing.T) {
+	a, _ := net.Pipe()
+	mp := NewMultiplex(a, false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	var counter int
+	var deadlineExceeded bool
+	for i := 0; i < 1000; i++ {
+		if _, err := mp.NewStream(ctx); err != nil {
+			if err != context.DeadlineExceeded {
+				t.Fatalf("expected the error to be a deadline error, got %s", err.Error())
+			}
+			deadlineExceeded = true
+			break
+		}
+		counter++
+	}
+	if counter == 0 {
+		t.Fatal("expected at least some streams to open successfully")
+	}
+	if !deadlineExceeded {
+		t.Fatal("expected a deadline error to occur at some point")
+	}
 }
 
 func TestWriteAfterClose(t *testing.T) {
@@ -134,7 +161,7 @@ func TestWriteAfterClose(t *testing.T) {
 		close(done)
 	}()
 
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +205,7 @@ func TestEcho(t *testing.T) {
 		io.Copy(s, s)
 	}()
 
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +241,7 @@ func TestFullClose(t *testing.T) {
 
 	mes := make([]byte, 40960)
 	rand.Read(mes)
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +308,7 @@ func TestHalfClose(t *testing.T) {
 		}
 	}()
 
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +366,7 @@ func TestClosing(t *testing.T) {
 	mpa := NewMultiplex(a, false)
 	mpb := NewMultiplex(b, true)
 
-	_, err := mpb.NewStream()
+	_, err := mpb.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +400,7 @@ func TestReset(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +452,7 @@ func TestCancelRead(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +513,7 @@ func TestCancelWrite(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +587,7 @@ func TestCancelReadAfterWrite(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +630,7 @@ func TestResetAfterEOF(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +659,7 @@ func TestOpenAfterClose(t *testing.T) {
 	mpa := NewMultiplex(a, false)
 	mpb := NewMultiplex(b, true)
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,12 +673,12 @@ func TestOpenAfterClose(t *testing.T) {
 
 	mpa.Close()
 
-	s, err := mpa.NewStream()
+	s, err := mpa.NewStream(context.Background())
 	if err == nil || s != nil {
 		t.Fatal("opened a stream on a closed connection")
 	}
 
-	s, err = mpa.NewStream()
+	s, err = mpa.NewStream(context.Background())
 	if err == nil || s != nil {
 		t.Fatal("opened a stream on a closed connection")
 	}
@@ -668,7 +695,7 @@ func TestDeadline(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +721,7 @@ func TestReadAfterClose(t *testing.T) {
 	defer mpa.Close()
 	defer mpb.Close()
 
-	sa, err := mpa.NewStream()
+	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +762,7 @@ func TestFuzzCloseStream(t *testing.T) {
 		streams := make([]*Stream, 100)
 		for i := range streams {
 			var err error
-			streams[i], err = mpb.NewStream()
+			streams[i], err = mpb.NewStream(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}

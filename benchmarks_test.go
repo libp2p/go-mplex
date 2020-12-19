@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"context"
 	"io"
 	"math/rand"
 	"net"
@@ -64,7 +65,7 @@ func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 
 	streamPairs := make([][]*Stream, 0)
 	for i := 0; i < mp; i++ {
-		sa, err := mpa.NewStream()
+		sa, err := mpa.NewStream(context.Background())
 		if err != nil {
 			b.Error(err)
 		}
@@ -190,7 +191,7 @@ func benchmarkPackets(b *testing.B, msgs [][]byte) {
 func benchmarkPacketsWithConn(b *testing.B, parallelism int, msgs [][]byte, mpa, mpb *Multiplex) {
 	streamPairs := make([][]*Stream, 0)
 	for i := 0; i < parallelism*runtime.GOMAXPROCS(0); i++ {
-		sa, err := mpa.NewStream()
+		sa, err := mpa.NewStream(context.Background())
 		if err != nil {
 			b.Error(err)
 		}
