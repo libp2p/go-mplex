@@ -5,10 +5,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "interface-connection": "^0.3.2",
-    "libp2p-mplex": "^0.7.0",
-    "pull-stream": "^3.6.7",
-    "stream-to-pull-stream": "^1.7.2",
+    "bl": "^5.0.0",
+    "it-pipe": "^1.1.0",
+    "libp2p-mplex": "^0.10.0",
+    "libp2p-tcp": "^0.17.1",
+    "streaming-iterables": "^6.0.0",
     "tcp": "^1.0.0"
   }
 }
