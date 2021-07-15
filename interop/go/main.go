@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,6 +19,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sess := mplex.NewMultiplex(conn, true)
 	defer sess.Close()
 
@@ -28,7 +33,7 @@ func main() {
 
 		go func() {
 			defer wg.Done()
-			s, err := sess.NewStream()
+			s, err := sess.NewStream(ctx)
 			if err != nil {
 				panic(err)
 			}
@@ -60,7 +65,10 @@ func readWrite(s *mplex.Stream) {
 				panic(err)
 			}
 		}
-		s.Close()
+		err := s.CloseWrite()
+		if err != nil {
+			panic(err)
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -84,4 +92,8 @@ func readWrite(s *mplex.Stream) {
 		}
 	}()
 	wg.Wait()
+	err := s.Close()
+	if err != nil {
+		panic(err)
+	}
 }
