@@ -1,0 +1,33 @@
+on: pull_request
+name: Interop
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    name: Go/JS
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.16.x
+      - name: Go information
+        run: |
+          go version
+          go env
+      - name: Building JS Test
+        working-directory: interop/js
+        run: npm install
+      - name: Building Go Test
+        working-directory: interop/go
+        run: go build -o test-go .
+      - name: Test
+        working-directory: interop
+        run: |
+          npm --prefix ./js/ start &
+          sleep 1
+          ./go/test-go &
+          # We need to wait twice because -n only waits for one job.
+          # We use -n to get the exit status of the job. GitHub Actions are run with "-e" so a
+          # non-zero exit code will cause the test to fail.
+          wait -n
+          wait -n
