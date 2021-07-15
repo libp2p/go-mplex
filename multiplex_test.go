@@ -69,22 +69,25 @@ func TestBasicStreams(t *testing.T) {
 	mpb := NewMultiplex(b, true)
 
 	mes := []byte("Hello world")
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		s, err := mpb.Accept()
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 
 		_, err = s.Write(mes)
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 
 		err = s.Close()
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 	}()
+	defer func() { <-done }()
 
 	s, err := mpa.NewStream(context.Background())
 	if err != nil {
@@ -143,7 +146,7 @@ func TestWriteAfterClose(t *testing.T) {
 	go func() {
 		s, err := mpb.Accept()
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 
 		_, err = s.Write(mes)
@@ -198,7 +201,7 @@ func TestEcho(t *testing.T) {
 	go func() {
 		s, err := mpb.Accept()
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 
 		defer s.Close()
@@ -405,6 +408,9 @@ func TestReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	buf := make([]byte, 10)
 
@@ -635,6 +641,9 @@ func TestResetAfterEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	sb, err := mpb.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := sa.CloseWrite(); err != nil {
 		t.Fatal(err)
@@ -764,7 +773,7 @@ func TestFuzzCloseStream(t *testing.T) {
 			var err error
 			streams[i], err = mpb.NewStream(context.Background())
 			if err != nil {
-				t.Fatal(err)
+				t.Error(err)
 			}
 
 			go streams[i].Close()

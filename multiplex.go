@@ -36,7 +36,6 @@ var ErrTwoInitiators = errors.New("two initiators")
 var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
 var errTimeout = timeout{}
-var errStreamClosed = errors.New("stream closed")
 
 var (
 	ResetStreamTimeout = 2 * time.Minute
@@ -46,15 +45,15 @@ var (
 
 type timeout struct{}
 
-func (_ timeout) Error() string {
+func (timeout) Error() string {
 	return "i/o deadline exceeded"
 }
 
-func (_ timeout) Temporary() bool {
+func (timeout) Temporary() bool {
 	return true
 }
 
-func (_ timeout) Timeout() bool {
+func (timeout) Timeout() bool {
 	return true
 }
 
@@ -207,6 +206,7 @@ func (mp *Multiplex) handleOutgoing() {
 	}
 }
 
+//lint:ignore U1000 disabled
 func (mp *Multiplex) writeMsg(data []byte) error {
 	if len(data) >= 512 {
 		err := mp.doWriteMsg(data)
@@ -526,7 +526,7 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	if l > uint64(MaxMessageSize) {
-		return nil, fmt.Errorf("message size too large!")
+		return nil, fmt.Errorf("message size too large")
 	}
 
 	if l == 0 {
@@ -540,12 +540,4 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf[:n], nil
-}
-
-func isFatalNetworkError(err error) bool {
-	nerr, ok := err.(net.Error)
-	if ok {
-		return !(nerr.Timeout() || nerr.Temporary())
-	}
-	return false
 }
