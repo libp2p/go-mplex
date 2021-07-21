@@ -165,6 +165,11 @@ func (mp *Multiplex) IsClosed() bool {
 	}
 }
 
+// CloseChan returns a read-only channel which will be closed when the session is closed
+func (mp *Multiplex) CloseChan() <-chan struct{} {
+	return mp.closed
+}
+
 func (mp *Multiplex) sendMsg(timeout, cancel <-chan struct{}, header uint64, data []byte) error {
 	buf := pool.Get(len(data) + 20)
 

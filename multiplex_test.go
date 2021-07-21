@@ -394,6 +394,38 @@ func TestClosing(t *testing.T) {
 	}
 }
 
+func TestCloseChan(t *testing.T) {
+	a, b := net.Pipe()
+
+	mpa := NewMultiplex(a, false)
+	mpb := NewMultiplex(b, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	_, err := mpb.NewStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = mpa.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(time.Second * 1)
+		mpa.Close()
+	}()
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("did not receive from CloseChan within timeout")
+	case <-mpb.CloseChan():
+	case <-mpa.CloseChan():
+	}
+}
+
 func TestReset(t *testing.T) {
 	a, b := net.Pipe()
 
