@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	logging "github.com/ipfs/go-log"
+	logging "github.com/ipfs/go-log/v2"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/multiformats/go-varint"
 )
@@ -199,7 +199,7 @@ func (mp *Multiplex) handleOutgoing() {
 		case data := <-mp.writeCh:
 			// FIXME: https://github.com/libp2p/go-libp2p/issues/644
 			// write coalescing disabled until this can be fixed.
-			//err := mp.writeMsg(data)
+			// err := mp.writeMsg(data)
 			err := mp.doWriteMsg(data)
 			pool.Put(data)
 			if err != nil {
