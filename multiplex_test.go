@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -879,4 +881,49 @@ func arrComp(a, b []byte) error {
 		return fmt.Errorf(msg)
 	}
 	return nil
+}
+
+func TestMaxIncomingStreams(t *testing.T) {
+	a, b := net.Pipe()
+	client := NewMultiplex(a, true)
+	defer client.Close()
+
+	server := NewMultiplex(b, false)
+	defer server.Close()
+
+	go func() {
+		for {
+			str, err := server.Accept()
+			if err != nil {
+				return
+			}
+			_, err = str.Write([]byte("foobar"))
+			require.NoError(t, err)
+		}
+	}()
+
+	var streams []*Stream
+	for i := 0; i < MaxIncomingStreams; i++ {
+		str, err := client.NewStream(context.Background())
+		require.NoError(t, err)
+		_, err = str.Read(make([]byte, 6))
+		require.NoError(t, err)
+		streams = append(streams, str)
+	}
+	// The server now has maxIncomingStreams incoming streams.
+	// It will now reset the next stream that is opened.
+	str, err := client.NewStream(context.Background())
+	require.NoError(t, err)
+	str.SetDeadline(time.Now().Add(time.Second))
+	_, err = str.Read([]byte{0})
+	require.EqualError(t, err, "stream reset")
+
+	// Now close one of the streams.
+	// This should then allow the client to open a new stream.
+	streams[0].Close()
+	str, err = client.NewStream(context.Background())
+	require.NoError(t, err)
+	str.SetDeadline(time.Now().Add(time.Second))
+	_, err = str.Read([]byte{0})
+	require.NoError(t, err)
 }

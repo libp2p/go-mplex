@@ -39,7 +39,7 @@ var errTimeout = timeout{}
 
 var (
 	ResetStreamTimeout = 2 * time.Minute
-
+	MaxIncomingStreams = 1000
 	WriteCoalesceDelay = 100 * time.Microsecond
 )
 
@@ -83,22 +83,26 @@ type Multiplex struct {
 
 	nstreams chan *Stream
 
-	channels map[streamID]*Stream
-	chLock   sync.Mutex
+	maxIncoming int
+
+	channels    map[streamID]*Stream
+	numIncoming int
+	chLock      sync.Mutex
 }
 
 // NewMultiplex creates a new multiplexer session.
 func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
 	mp := &Multiplex{
-		con:        con,
-		initiator:  initiator,
-		buf:        bufio.NewReader(con),
-		channels:   make(map[streamID]*Stream),
-		closed:     make(chan struct{}),
-		shutdown:   make(chan struct{}),
-		writeCh:    make(chan []byte, 16),
-		writeTimer: time.NewTimer(0),
-		nstreams:   make(chan *Stream, 16),
+		con:         con,
+		initiator:   initiator,
+		buf:         bufio.NewReader(con),
+		channels:    make(map[streamID]*Stream),
+		closed:      make(chan struct{}),
+		shutdown:    make(chan struct{}),
+		writeCh:     make(chan []byte, 16),
+		writeTimer:  time.NewTimer(0),
+		maxIncoming: MaxIncomingStreams,
+		nstreams:    make(chan *Stream, 16),
 	}
 
 	go mp.handleIncoming()
@@ -410,6 +414,15 @@ func (mp *Multiplex) handleIncoming() {
 
 			msch = mp.newStream(ch, name)
 			mp.chLock.Lock()
+			if remoteIsInitiator {
+				if mp.numIncoming >= mp.maxIncoming {
+					msch.mp.sendResetMsg(msch.id.header(resetTag), true)
+					mp.chLock.Unlock()
+					continue
+				} else {
+					mp.numIncoming++
+				}
+			}
 			mp.channels[ch] = msch
 			mp.chLock.Unlock()
 			select {
@@ -436,6 +449,9 @@ func (mp *Multiplex) handleIncoming() {
 			// unregister and throw away future data.
 			mp.chLock.Lock()
 			delete(mp.channels, ch)
+			if remoteIsInitiator {
+				mp.numIncoming--
+			}
 			mp.chLock.Unlock()
 
 			// close data channel, there will be no more data.
