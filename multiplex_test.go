@@ -21,8 +21,8 @@ func init() {
 func TestSlowReader(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -65,8 +65,8 @@ func TestSlowReader(t *testing.T) {
 func TestBasicStreams(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	mes := []byte("Hello world")
 	done := make(chan struct{})
@@ -111,7 +111,7 @@ func TestBasicStreams(t *testing.T) {
 
 func TestOpenStreamDeadline(t *testing.T) {
 	a, _ := net.Pipe()
-	mp := NewMultiplex(a, false)
+	mp := NewMultiplex(a, false, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -138,8 +138,8 @@ func TestOpenStreamDeadline(t *testing.T) {
 func TestWriteAfterClose(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	done := make(chan struct{})
 	mes := []byte("Hello world")
@@ -193,8 +193,8 @@ func TestWriteAfterClose(t *testing.T) {
 func TestEcho(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	mes := make([]byte, 40960)
 	rand.Read(mes)
@@ -239,8 +239,8 @@ func TestEcho(t *testing.T) {
 
 func TestFullClose(t *testing.T) {
 	a, b := net.Pipe()
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	mes := make([]byte, 40960)
 	rand.Read(mes)
@@ -286,8 +286,8 @@ func TestFullClose(t *testing.T) {
 
 func TestHalfClose(t *testing.T) {
 	a, b := net.Pipe()
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	wait := make(chan struct{})
 	mes := make([]byte, 40960)
@@ -353,8 +353,8 @@ func TestFuzzCloseConnection(t *testing.T) {
 	a, b := net.Pipe()
 
 	for i := 0; i < 1000; i++ {
-		mpa := NewMultiplex(a, false)
-		mpb := NewMultiplex(b, true)
+		mpa := NewMultiplex(a, false, nil)
+		mpb := NewMultiplex(b, true, nil)
 
 		go mpa.Close()
 		go mpa.Close()
@@ -366,8 +366,8 @@ func TestFuzzCloseConnection(t *testing.T) {
 func TestClosing(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	_, err := mpb.NewStream(context.Background())
 	if err != nil {
@@ -397,8 +397,8 @@ func TestClosing(t *testing.T) {
 func TestCloseChan(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
 	defer cancel()
@@ -433,8 +433,8 @@ func TestCloseChan(t *testing.T) {
 func TestReset(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -488,8 +488,8 @@ func TestReset(t *testing.T) {
 func TestCancelRead(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -549,8 +549,8 @@ func TestCancelRead(t *testing.T) {
 func TestCancelWrite(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -623,8 +623,8 @@ func TestCancelWrite(t *testing.T) {
 func TestCancelReadAfterWrite(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -666,8 +666,8 @@ func TestCancelReadAfterWrite(t *testing.T) {
 func TestResetAfterEOF(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -701,8 +701,8 @@ func TestResetAfterEOF(t *testing.T) {
 func TestOpenAfterClose(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	sa, err := mpa.NewStream(context.Background())
 	if err != nil {
@@ -734,8 +734,8 @@ func TestOpenAfterClose(t *testing.T) {
 func TestDeadline(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -760,8 +760,8 @@ func TestDeadline(t *testing.T) {
 func TestReadAfterClose(t *testing.T) {
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()
@@ -795,8 +795,8 @@ func TestFuzzCloseStream(t *testing.T) {
 
 	a, b := net.Pipe()
 
-	mpa := NewMultiplex(a, false)
-	mpb := NewMultiplex(b, true)
+	mpa := NewMultiplex(a, false, nil)
+	mpb := NewMultiplex(b, true, nil)
 
 	defer mpa.Close()
 	defer mpb.Close()

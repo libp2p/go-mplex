@@ -23,7 +23,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sess := mplex.NewMultiplex(conn, true)
+	sess := mplex.NewMultiplex(conn, true, nil)
 	defer sess.Close()
 
 	var wg sync.WaitGroup

@@ -62,8 +62,8 @@ func TestSmallPackets(t *testing.T) {
 
 func testSmallPackets(b *testing.B, n1, n2 net.Conn) {
 	msgs := MakeSmallPacketDistribution(b)
-	mpa := NewMultiplex(n1, false)
-	mpb := NewMultiplex(n2, true)
+	mpa := NewMultiplex(n1, false, nil)
+	mpb := NewMultiplex(n2, true, nil)
 	mp := runtime.GOMAXPROCS(0)
 	runtime.GOMAXPROCS(mp)
 
@@ -169,8 +169,8 @@ func BenchmarkSlowConnSmallPackets(b *testing.B) {
 	defer la.Close()
 	wg.Wait()
 	defer lb.Close()
-	mpa := NewMultiplex(la, false)
-	mpb := NewMultiplex(lb, true)
+	mpa := NewMultiplex(la, false, nil)
+	mpb := NewMultiplex(lb, true, nil)
 	defer mpa.Close()
 	defer mpb.Close()
 	benchmarkPacketsWithConn(b, 1, msgs, mpa, mpb)
@@ -185,8 +185,8 @@ func benchmarkPackets(b *testing.B, msgs [][]byte) {
 	pa, pb := net.Pipe()
 	defer pa.Close()
 	defer pb.Close()
-	mpa := NewMultiplex(pa, false)
-	mpb := NewMultiplex(pb, true)
+	mpa := NewMultiplex(pa, false, nil)
+	mpb := NewMultiplex(pb, true, nil)
 	defer mpa.Close()
 	defer mpb.Close()
 	benchmarkPacketsWithConn(b, 1, msgs, mpa, mpb)
