@@ -63,22 +63,6 @@ type nullMemoryManager struct{}
 func (m *nullMemoryManager) ReserveMemory(size int, prio uint8) error { return nil }
 func (m *nullMemoryManager) ReleaseMemory(size int)                   {}
 
-type memoryPool struct {
-	manager MemoryManager
-}
-
-func (p *memoryPool) Get(length int) ([]byte, error) {
-	if err := p.manager.ReserveMemory(length, 128); err != nil {
-		return nil, err
-	}
-	return pool.Get(length), nil
-}
-
-func (p *memoryPool) Put(slice []byte) {
-	p.manager.ReleaseMemory(len(slice))
-	pool.Put(slice)
-}
-
 // +1 for initiator
 const (
 	newStreamTag = 0
@@ -94,7 +78,7 @@ type Multiplex struct {
 	nextID    uint64
 	initiator bool
 
-	pool *memoryPool
+	memoryManager MemoryManager
 
 	closed       chan struct{}
 	shutdown     chan struct{}
@@ -117,16 +101,16 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) *Mu
 		memoryManager = &nullMemoryManager{}
 	}
 	mp := &Multiplex{
-		con:        con,
-		initiator:  initiator,
-		buf:        bufio.NewReader(con),
-		channels:   make(map[streamID]*Stream),
-		closed:     make(chan struct{}),
-		shutdown:   make(chan struct{}),
-		writeCh:    make(chan []byte, 16),
-		writeTimer: time.NewTimer(0),
-		nstreams:   make(chan *Stream, 16),
-		pool:       &memoryPool{manager: memoryManager},
+		con:           con,
+		initiator:     initiator,
+		buf:           bufio.NewReader(con),
+		channels:      make(map[streamID]*Stream),
+		closed:        make(chan struct{}),
+		shutdown:      make(chan struct{}),
+		writeCh:       make(chan []byte, 16),
+		writeTimer:    time.NewTimer(0),
+		nstreams:      make(chan *Stream, 16),
+		memoryManager: memoryManager,
 	}
 
 	go mp.handleIncoming()
@@ -199,7 +183,7 @@ func (mp *Multiplex) CloseChan() <-chan struct{} {
 }
 
 func (mp *Multiplex) sendMsg(timeout, cancel <-chan struct{}, header uint64, data []byte) error {
-	buf, err := mp.pool.Get(len(data) + 20)
+	buf, err := mp.getBuffer(len(data) + 20)
 	if err != nil {
 		return err
 	}
@@ -232,7 +216,7 @@ func (mp *Multiplex) handleOutgoing() {
 			// write coalescing disabled until this can be fixed.
 			// err := mp.writeMsg(data)
 			err := mp.doWriteMsg(data)
-			mp.pool.Put(data)
+			mp.putBuffer(data)
 			if err != nil {
 				// the connection is closed by this time
 				log.Warnf("error writing data: %s", err.Error())
@@ -246,18 +230,18 @@ func (mp *Multiplex) handleOutgoing() {
 func (mp *Multiplex) writeMsg(data []byte) error {
 	if len(data) >= 512 {
 		err := mp.doWriteMsg(data)
-		mp.pool.Put(data)
+		mp.putBuffer(data)
 		return err
 	}
 
-	buf, err := mp.pool.Get(4096)
+	buf, err := mp.getBuffer(4096)
 	if err != nil {
 		return err
 	}
-	defer mp.pool.Put(buf)
+	defer mp.putBuffer(buf)
 
 	n := copy(buf, data)
-	mp.pool.Put(data)
+	mp.putBuffer(data)
 
 	if !mp.writeTimerFired {
 		if !mp.writeTimer.Stop() {
@@ -274,14 +258,14 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 			if wr < len(data) {
 				// we filled the buffer, send it
 				if err := mp.doWriteMsg(buf); err != nil {
-					mp.pool.Put(data)
+					mp.putBuffer(data)
 					return err
 				}
 
 				if len(data)-wr >= 512 {
 					// the remaining data is not a small write, send it
 					err := mp.doWriteMsg(data[wr:])
-					mp.pool.Put(data)
+					mp.putBuffer(data)
 					return err
 				}
 
@@ -296,7 +280,7 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 				n += wr
 			}
 
-			mp.pool.Put(data)
+			mp.putBuffer(data)
 
 		case <-mp.writeTimer.C:
 			mp.writeTimerFired = true
@@ -439,7 +423,7 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			name := string(b)
-			mp.pool.Put(b)
+			mp.putBuffer(b)
 
 			msch = mp.newStream(ch, name)
 			mp.chLock.Lock()
@@ -484,7 +468,7 @@ func (mp *Multiplex) handleIncoming() {
 				// We're not accepting data on this stream, for
 				// some reason. It's likely that we reset it, or
 				// simply canceled reads (e.g., called Close).
-				mp.pool.Put(b)
+				mp.putBuffer(b)
 				continue
 			}
 
@@ -493,9 +477,9 @@ func (mp *Multiplex) handleIncoming() {
 			case msch.dataIn <- b:
 			case <-msch.readCancel:
 				// the user has canceled reading. walk away.
-				mp.pool.Put(b)
+				mp.putBuffer(b)
 			case <-recvTimeout.C:
-				mp.pool.Put(b)
+				mp.putBuffer(b)
 				log.Warnf("timed out receiving message into stream queue.")
 				// Do not do this asynchronously. Otherwise, we
 				// could drop a message, then receive a message,
@@ -503,7 +487,7 @@ func (mp *Multiplex) handleIncoming() {
 				msch.Reset()
 				continue
 			case <-mp.shutdown:
-				mp.pool.Put(b)
+				mp.putBuffer(b)
 				return
 			}
 			if !recvTimeout.Stop() {
@@ -571,7 +555,7 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 		return nil, nil
 	}
 
-	buf, err := mp.pool.Get(int(l))
+	buf, err := mp.getBuffer(int(l))
 	if err != nil {
 		return nil, err
 	}
@@ -581,4 +565,19 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	}
 
 	return buf[:n], nil
+}
+
+func (mp *Multiplex) getBuffer(length int) ([]byte, error) {
+	if err := mp.memoryManager.ReserveMemory(length, 128); err != nil {
+		// Kill the connection when we can't reserve memory.
+		// Since mplex doesn't support backpressure, there's not a lot we can do.
+		mp.closeNoWait()
+		return nil, err
+	}
+	return pool.Get(length), nil
+}
+
+func (mp *Multiplex) putBuffer(slice []byte) {
+	mp.memoryManager.ReleaseMemory(len(slice))
+	pool.Put(slice)
 }
