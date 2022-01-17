@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	logging "github.com/ipfs/go-log/v2"
 	pool "github.com/libp2p/go-buffer-pool"
+
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/multiformats/go-varint"
 )
 
@@ -45,17 +46,22 @@ var (
 
 type timeout struct{}
 
-func (timeout) Error() string {
-	return "i/o deadline exceeded"
+func (timeout) Error() string   { return "i/o deadline exceeded" }
+func (timeout) Temporary() bool { return true }
+func (timeout) Timeout() bool   { return true }
+
+// The MemoryManager allows management of memory allocations.
+type MemoryManager interface {
+	// ReserveMemory reserves memory / buffer.
+	ReserveMemory(size int, prio uint8) error
+	// ReleaseMemory explicitly releases memory previously reserved with ReserveMemory
+	ReleaseMemory(size int)
 }
 
-func (timeout) Temporary() bool {
-	return true
-}
+type nullMemoryManager struct{}
 
-func (timeout) Timeout() bool {
-	return true
-}
+func (m *nullMemoryManager) ReserveMemory(size int, prio uint8) error { return nil }
+func (m *nullMemoryManager) ReleaseMemory(size int)                   {}
 
 // +1 for initiator
 const (
@@ -71,6 +77,8 @@ type Multiplex struct {
 	buf       *bufio.Reader
 	nextID    uint64
 	initiator bool
+
+	memoryManager MemoryManager
 
 	closed       chan struct{}
 	shutdown     chan struct{}
@@ -88,17 +96,21 @@ type Multiplex struct {
 }
 
 // NewMultiplex creates a new multiplexer session.
-func NewMultiplex(con net.Conn, initiator bool) *Multiplex {
+func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) *Multiplex {
+	if memoryManager == nil {
+		memoryManager = &nullMemoryManager{}
+	}
 	mp := &Multiplex{
-		con:        con,
-		initiator:  initiator,
-		buf:        bufio.NewReader(con),
-		channels:   make(map[streamID]*Stream),
-		closed:     make(chan struct{}),
-		shutdown:   make(chan struct{}),
-		writeCh:    make(chan []byte, 16),
-		writeTimer: time.NewTimer(0),
-		nstreams:   make(chan *Stream, 16),
+		con:           con,
+		initiator:     initiator,
+		buf:           bufio.NewReader(con),
+		channels:      make(map[streamID]*Stream),
+		closed:        make(chan struct{}),
+		shutdown:      make(chan struct{}),
+		writeCh:       make(chan []byte, 16),
+		writeTimer:    time.NewTimer(0),
+		nstreams:      make(chan *Stream, 16),
+		memoryManager: memoryManager,
 	}
 
 	go mp.handleIncoming()
@@ -171,7 +183,10 @@ func (mp *Multiplex) CloseChan() <-chan struct{} {
 }
 
 func (mp *Multiplex) sendMsg(timeout, cancel <-chan struct{}, header uint64, data []byte) error {
-	buf := pool.Get(len(data) + 20)
+	buf, err := mp.getBuffer(len(data) + 20)
+	if err != nil {
+		return err
+	}
 
 	n := 0
 	n += binary.PutUvarint(buf[n:], header)
@@ -201,7 +216,7 @@ func (mp *Multiplex) handleOutgoing() {
 			// write coalescing disabled until this can be fixed.
 			// err := mp.writeMsg(data)
 			err := mp.doWriteMsg(data)
-			pool.Put(data)
+			mp.putBuffer(data)
 			if err != nil {
 				// the connection is closed by this time
 				log.Warnf("error writing data: %s", err.Error())
@@ -215,15 +230,18 @@ func (mp *Multiplex) handleOutgoing() {
 func (mp *Multiplex) writeMsg(data []byte) error {
 	if len(data) >= 512 {
 		err := mp.doWriteMsg(data)
-		pool.Put(data)
+		mp.putBuffer(data)
 		return err
 	}
 
-	buf := pool.Get(4096)
-	defer pool.Put(buf)
+	buf, err := mp.getBuffer(4096)
+	if err != nil {
+		return err
+	}
+	defer mp.putBuffer(buf)
 
 	n := copy(buf, data)
-	pool.Put(data)
+	mp.putBuffer(data)
 
 	if !mp.writeTimerFired {
 		if !mp.writeTimer.Stop() {
@@ -239,16 +257,15 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 			wr := copy(buf[n:], data)
 			if wr < len(data) {
 				// we filled the buffer, send it
-				err := mp.doWriteMsg(buf)
-				if err != nil {
-					pool.Put(data)
+				if err := mp.doWriteMsg(buf); err != nil {
+					mp.putBuffer(data)
 					return err
 				}
 
 				if len(data)-wr >= 512 {
 					// the remaining data is not a small write, send it
 					err := mp.doWriteMsg(data[wr:])
-					pool.Put(data)
+					mp.putBuffer(data)
 					return err
 				}
 
@@ -263,7 +280,7 @@ func (mp *Multiplex) writeMsg(data []byte) error {
 				n += wr
 			}
 
-			pool.Put(data)
+			mp.putBuffer(data)
 
 		case <-mp.writeTimer.C:
 			mp.writeTimerFired = true
@@ -406,7 +423,7 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			name := string(b)
-			pool.Put(b)
+			mp.putBuffer(b)
 
 			msch = mp.newStream(ch, name)
 			mp.chLock.Lock()
@@ -451,7 +468,7 @@ func (mp *Multiplex) handleIncoming() {
 				// We're not accepting data on this stream, for
 				// some reason. It's likely that we reset it, or
 				// simply canceled reads (e.g., called Close).
-				pool.Put(b)
+				mp.putBuffer(b)
 				continue
 			}
 
@@ -460,9 +477,9 @@ func (mp *Multiplex) handleIncoming() {
 			case msch.dataIn <- b:
 			case <-msch.readCancel:
 				// the user has canceled reading. walk away.
-				pool.Put(b)
+				mp.putBuffer(b)
 			case <-recvTimeout.C:
-				pool.Put(b)
+				mp.putBuffer(b)
 				log.Warnf("timed out receiving message into stream queue.")
 				// Do not do this asynchronously. Otherwise, we
 				// could drop a message, then receive a message,
@@ -470,7 +487,7 @@ func (mp *Multiplex) handleIncoming() {
 				msch.Reset()
 				continue
 			case <-mp.shutdown:
-				pool.Put(b)
+				mp.putBuffer(b)
 				return
 			}
 			if !recvTimeout.Stop() {
@@ -538,11 +555,29 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 		return nil, nil
 	}
 
-	buf := pool.Get(int(l))
+	buf, err := mp.getBuffer(int(l))
+	if err != nil {
+		return nil, err
+	}
 	n, err := io.ReadFull(mp.buf, buf)
 	if err != nil {
 		return nil, err
 	}
 
 	return buf[:n], nil
+}
+
+func (mp *Multiplex) getBuffer(length int) ([]byte, error) {
+	if err := mp.memoryManager.ReserveMemory(length, 128); err != nil {
+		// Kill the connection when we can't reserve memory.
+		// Since mplex doesn't support backpressure, there's not a lot we can do.
+		mp.closeNoWait()
+		return nil, err
+	}
+	return pool.Get(length), nil
+}
+
+func (mp *Multiplex) putBuffer(slice []byte) {
+	mp.memoryManager.ReleaseMemory(len(slice))
+	pool.Put(slice)
 }
