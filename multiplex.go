@@ -139,7 +139,7 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 		return nil, err
 	}
 
-	mp.bufMax = bufs
+	mp.bufMax = bufs - 1
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
 	mp.timerIn = time.NewTimer(ReadDeadlockTimeout)
