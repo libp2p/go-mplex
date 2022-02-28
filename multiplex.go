@@ -40,9 +40,8 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 var errTimeout = timeout{}
 
 var (
-	ResetStreamTimeout = 2 * time.Minute
-
-	WriteCoalesceDelay = 100 * time.Microsecond
+	ResetStreamTimeout  = 2 * time.Minute
+	ReadDeadlockTimeout = 2 * time.Minute
 )
 
 type timeout struct{}
@@ -92,6 +91,8 @@ type Multiplex struct {
 	channels map[streamID]*Stream
 	chLock   sync.Mutex
 
+	timerIn        *time.Timer
+	timerInFired   bool
 	bufIn, bufOut  chan struct{}
 	bufMax         int
 	reservedMemory int
@@ -141,6 +142,7 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	mp.bufMax = bufs
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
+	mp.timerIn = time.NewTimer(ReadDeadlockTimeout)
 
 	go mp.handleIncoming()
 	go mp.handleOutgoing()
@@ -532,8 +534,16 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 }
 
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
+	if !mp.timerInFired && !mp.timerIn.Stop() {
+		<-mp.timerIn.C
+	}
+	mp.timerIn.Reset(ReadDeadlockTimeout)
+
 	select {
 	case mp.bufIn <- struct{}{}:
+	case <-mp.timerIn.C:
+		mp.timerInFired = true
+		return nil, errTimeout
 	case <-mp.shutdown:
 		return nil, ErrShutdown
 	}
