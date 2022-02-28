@@ -20,6 +20,7 @@ import (
 var log = logging.Logger("mplex")
 
 var MaxMessageSize = 1 << 20
+var MaxBuffers = 4
 
 // Max time to block waiting for a slow reader to read from a stream before
 // resetting it. Preferably, we'd have some form of back-pressure mechanism but
@@ -85,18 +86,18 @@ type Multiplex struct {
 	shutdownErr  error
 	shutdownLock sync.Mutex
 
-	writeCh         chan []byte
-	writeTimer      *time.Timer
-	writeTimerFired bool
-
+	writeCh  chan []byte
 	nstreams chan *Stream
 
 	channels map[streamID]*Stream
 	chLock   sync.Mutex
+
+	bufIn, bufOut  chan struct{}
+	reservedMemory int
 }
 
 // NewMultiplex creates a new multiplexer session.
-func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) *Multiplex {
+func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*Multiplex, error) {
 	if memoryManager == nil {
 		memoryManager = &nullMemoryManager{}
 	}
@@ -108,15 +109,41 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) *Mu
 		closed:        make(chan struct{}),
 		shutdown:      make(chan struct{}),
 		writeCh:       make(chan []byte, 16),
-		writeTimer:    time.NewTimer(0),
 		nstreams:      make(chan *Stream, 16),
 		memoryManager: memoryManager,
 	}
 
+	// up-front reserve memory for max buffers
+	bufs := 0
+	var err error
+	for i := 0; i < MaxBuffers; i++ {
+		var prio uint8
+		switch bufs {
+		case 0:
+			prio = 255
+		case 1:
+			prio = 192
+		default:
+			prio = 128
+		}
+		if err = mp.memoryManager.ReserveMemory(2*MaxMessageSize, prio); err != nil {
+			break
+		}
+		mp.reservedMemory += 2 * MaxMessageSize
+		bufs++
+	}
+
+	if bufs == 0 {
+		return nil, err
+	}
+
+	mp.bufIn = make(chan struct{}, bufs)
+	mp.bufOut = make(chan struct{}, bufs)
+
 	go mp.handleIncoming()
 	go mp.handleOutgoing()
 
-	return mp
+	return mp, nil
 }
 
 func (mp *Multiplex) newStream(id streamID, name string) (s *Stream) {
@@ -161,6 +188,7 @@ func (mp *Multiplex) closeNoWait() {
 	select {
 	case <-mp.shutdown:
 	default:
+		mp.memoryManager.ReleaseMemory(mp.reservedMemory)
 		mp.con.Close()
 		close(mp.shutdown)
 	}
@@ -183,7 +211,7 @@ func (mp *Multiplex) CloseChan() <-chan struct{} {
 }
 
 func (mp *Multiplex) sendMsg(timeout, cancel <-chan struct{}, header uint64, data []byte) error {
-	buf, err := mp.getBuffer(len(data) + 20)
+	buf, err := mp.getBufferOutbound(len(data)+20, timeout, cancel)
 	if err != nil {
 		return err
 	}
@@ -197,10 +225,13 @@ func (mp *Multiplex) sendMsg(timeout, cancel <-chan struct{}, header uint64, dat
 	case mp.writeCh <- buf[:n]:
 		return nil
 	case <-mp.shutdown:
+		mp.putBufferOutbound(buf)
 		return ErrShutdown
 	case <-timeout:
+		mp.putBufferOutbound(buf)
 		return errTimeout
 	case <-cancel:
+		mp.putBufferOutbound(buf)
 		return ErrStreamClosed
 	}
 }
@@ -212,82 +243,13 @@ func (mp *Multiplex) handleOutgoing() {
 			return
 
 		case data := <-mp.writeCh:
-			// FIXME: https://github.com/libp2p/go-libp2p/issues/644
-			// write coalescing disabled until this can be fixed.
-			// err := mp.writeMsg(data)
 			err := mp.doWriteMsg(data)
-			mp.putBuffer(data)
+			mp.putBufferOutbound(data)
 			if err != nil {
 				// the connection is closed by this time
 				log.Warnf("error writing data: %s", err.Error())
 				return
 			}
-		}
-	}
-}
-
-//lint:ignore U1000 disabled
-func (mp *Multiplex) writeMsg(data []byte) error {
-	if len(data) >= 512 {
-		err := mp.doWriteMsg(data)
-		mp.putBuffer(data)
-		return err
-	}
-
-	buf, err := mp.getBuffer(4096)
-	if err != nil {
-		return err
-	}
-	defer mp.putBuffer(buf)
-
-	n := copy(buf, data)
-	mp.putBuffer(data)
-
-	if !mp.writeTimerFired {
-		if !mp.writeTimer.Stop() {
-			<-mp.writeTimer.C
-		}
-	}
-	mp.writeTimer.Reset(WriteCoalesceDelay)
-	mp.writeTimerFired = false
-
-	for {
-		select {
-		case data = <-mp.writeCh:
-			wr := copy(buf[n:], data)
-			if wr < len(data) {
-				// we filled the buffer, send it
-				if err := mp.doWriteMsg(buf); err != nil {
-					mp.putBuffer(data)
-					return err
-				}
-
-				if len(data)-wr >= 512 {
-					// the remaining data is not a small write, send it
-					err := mp.doWriteMsg(data[wr:])
-					mp.putBuffer(data)
-					return err
-				}
-
-				n = copy(buf, data[wr:])
-
-				// we've written some, reset the timer to coalesce the rest
-				if !mp.writeTimer.Stop() {
-					<-mp.writeTimer.C
-				}
-				mp.writeTimer.Reset(WriteCoalesceDelay)
-			} else {
-				n += wr
-			}
-
-			mp.putBuffer(data)
-
-		case <-mp.writeTimer.C:
-			mp.writeTimerFired = true
-			return mp.doWriteMsg(buf[:n])
-
-		case <-mp.shutdown:
-			return ErrShutdown
 		}
 	}
 }
@@ -423,7 +385,7 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 			name := string(b)
-			mp.putBuffer(b)
+			mp.putBufferInbound(b)
 
 			msch = mp.newStream(ch, name)
 			mp.chLock.Lock()
@@ -468,7 +430,7 @@ func (mp *Multiplex) handleIncoming() {
 				// We're not accepting data on this stream, for
 				// some reason. It's likely that we reset it, or
 				// simply canceled reads (e.g., called Close).
-				mp.putBuffer(b)
+				mp.putBufferInbound(b)
 				continue
 			}
 
@@ -477,9 +439,9 @@ func (mp *Multiplex) handleIncoming() {
 			case msch.dataIn <- b:
 			case <-msch.readCancel:
 				// the user has canceled reading. walk away.
-				mp.putBuffer(b)
+				mp.putBufferInbound(b)
 			case <-recvTimeout.C:
-				mp.putBuffer(b)
+				mp.putBufferInbound(b)
 				log.Warnf("timed out receiving message into stream queue.")
 				// Do not do this asynchronously. Otherwise, we
 				// could drop a message, then receive a message,
@@ -487,7 +449,7 @@ func (mp *Multiplex) handleIncoming() {
 				msch.Reset()
 				continue
 			case <-mp.shutdown:
-				mp.putBuffer(b)
+				mp.putBufferInbound(b)
 				return
 			}
 			if !recvTimeout.Stop() {
@@ -555,7 +517,7 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 		return nil, nil
 	}
 
-	buf, err := mp.getBuffer(int(l))
+	buf, err := mp.getBufferInbound(int(l))
 	if err != nil {
 		return nil, err
 	}
@@ -567,17 +529,43 @@ func (mp *Multiplex) readNext() ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (mp *Multiplex) getBuffer(length int) ([]byte, error) {
-	if err := mp.memoryManager.ReserveMemory(length, 128); err != nil {
-		// Kill the connection when we can't reserve memory.
-		// Since mplex doesn't support backpressure, there's not a lot we can do.
-		mp.closeNoWait()
-		return nil, err
+func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
+	select {
+	case mp.bufIn <- struct{}{}:
+	case <-mp.shutdown:
+		return nil, ErrShutdown
 	}
-	return pool.Get(length), nil
+
+	return mp.getBuffer(length), nil
 }
 
-func (mp *Multiplex) putBuffer(slice []byte) {
-	mp.memoryManager.ReleaseMemory(len(slice))
+func (mp *Multiplex) getBufferOutbound(length int, timeout, cancel <-chan struct{}) ([]byte, error) {
+	select {
+	case mp.bufOut <- struct{}{}:
+	case <-timeout:
+		return nil, errTimeout
+	case <-cancel:
+		return nil, ErrStreamClosed
+	case <-mp.shutdown:
+		return nil, ErrShutdown
+	}
+
+	return mp.getBuffer(length), nil
+}
+
+func (mp *Multiplex) getBuffer(length int) []byte {
+	return pool.Get(length)
+}
+
+func (mp *Multiplex) putBufferInbound(b []byte) {
+	mp.putBuffer(b, mp.bufIn)
+}
+
+func (mp *Multiplex) putBufferOutbound(b []byte) {
+	mp.putBuffer(b, mp.bufOut)
+}
+
+func (mp *Multiplex) putBuffer(slice []byte, putBuf chan struct{}) {
+	<-putBuf
 	pool.Put(slice)
 }
