@@ -93,6 +93,7 @@ type Multiplex struct {
 	chLock   sync.Mutex
 
 	bufIn, bufOut  chan struct{}
+	bufMax         int
 	reservedMemory int
 }
 
@@ -137,6 +138,7 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 		return nil, err
 	}
 
+	mp.bufMax = bufs
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
 
@@ -150,7 +152,7 @@ func (mp *Multiplex) newStream(id streamID, name string) (s *Stream) {
 	s = &Stream{
 		id:          id,
 		name:        name,
-		dataIn:      make(chan []byte, 8),
+		dataIn:      make(chan []byte, mp.bufMax),
 		rDeadline:   makePipeDeadline(),
 		wDeadline:   makePipeDeadline(),
 		mp:          mp,
