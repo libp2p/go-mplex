@@ -143,6 +143,11 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
 	mp.bufInTimer = time.NewTimer(0)
+	defer func() {
+		if !mp.bufInTimer.Stop() {
+			<-mp.bufInTimer.C
+		}
+	}()
 
 	go mp.handleIncoming()
 	go mp.handleOutgoing()
@@ -183,9 +188,6 @@ func (mp *Multiplex) Close() error {
 
 	// Wait for the receive loop to finish.
 	<-mp.closed
-
-	// only stop it here, after the input loop has finished
-	mp.bufInTimer.Stop()
 
 	return nil
 }
@@ -604,9 +606,11 @@ func (mp *Multiplex) skipNextMsg(mlen int) error {
 }
 
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
-	if !mp.bufInTimer.Stop() {
-		<-mp.bufInTimer.C
-	}
+	defer func() {
+		if !mp.bufInTimer.Stop() {
+			<-mp.bufInTimer.C
+		}
+	}()
 	mp.bufInTimer.Reset(getInputBufferTimeout)
 
 	select {
