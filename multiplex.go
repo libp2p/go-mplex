@@ -393,22 +393,13 @@ loop:
 				return
 			}
 
-			if mlen > BufferSize {
-				log.Debugf("stream name is too large! [%d]", mlen)
-				mp.shutdownErr = fmt.Errorf("stream name too large")
-				return
-			}
-
-			b, err := mp.readNextMsg(mlen)
-			if err != nil {
+			// skip stream name, this is not at all useful in the context of libp2p streams
+			if err := mp.skipNextMsg(mlen); err != nil {
 				mp.shutdownErr = err
 				return
 			}
 
-			name := string(b)
-			mp.putBufferInbound(b)
-
-			msch = mp.newStream(ch, name)
+			msch = mp.newStream(ch, "")
 			mp.chLock.Lock()
 			mp.channels[ch] = msch
 			mp.chLock.Unlock()
