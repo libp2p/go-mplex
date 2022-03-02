@@ -353,6 +353,7 @@ func (mp *Multiplex) handleIncoming() {
 
 	recvTimeout := time.NewTimer(0)
 	defer recvTimeout.Stop()
+	recvTimeoutFired := false
 
 loop:
 	for {
@@ -475,11 +476,9 @@ loop:
 
 				rd += nextChunk
 
-				if !recvTimeout.Stop() {
-					select {
-					case <-recvTimeout.C:
-					default:
-					}
+				if !recvTimeout.Stop() && !recvTimeoutFired {
+					<-recvTimeout.C
+					recvTimeoutFired = false
 				}
 				recvTimeout.Reset(ReceiveTimeout)
 
@@ -496,6 +495,7 @@ loop:
 					break read
 
 				case <-recvTimeout.C:
+					recvTimeoutFired = true
 					mp.putBufferInbound(b)
 					log.Warnf("timed out receiving message into stream queue.")
 					// Do not do this asynchronously. Otherwise, we
@@ -604,12 +604,10 @@ func (mp *Multiplex) skipNextMsg(mlen int) error {
 }
 
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
+	timerFired := false
 	defer func() {
-		if !mp.bufInTimer.Stop() {
-			select {
-			case <-mp.bufInTimer.C:
-			default:
-			}
+		if !mp.bufInTimer.Stop() && !timerFired {
+			<-mp.bufInTimer.C
 		}
 	}()
 	mp.bufInTimer.Reset(getInputBufferTimeout)
@@ -617,6 +615,7 @@ func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
 	select {
 	case mp.bufIn <- struct{}{}:
 	case <-mp.bufInTimer.C:
+		timerFired = true
 		return nil, errTimeout
 	case <-mp.shutdown:
 		return nil, ErrShutdown
