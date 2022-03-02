@@ -23,6 +23,8 @@ const (
 	MaxMessageSize = 1 << 20
 	BufferSize     = 4096
 	MaxBuffers     = 4
+
+	MinMemoryReservation = 3 * BufferSize
 )
 
 var (
@@ -118,11 +120,11 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	}
 
 	// up-front reserve memory for the essential buffers (1 input, 1 output + the reader buffer)
-	if err := mp.memoryManager.ReserveMemory(3*BufferSize, 255); err != nil {
+	if err := mp.memoryManager.ReserveMemory(MinMemoryReservation, 255); err != nil {
 		return nil, err
 	}
 
-	mp.reservedMemory += 3 * BufferSize
+	mp.reservedMemory += MinMemoryReservation
 	bufs := 1
 
 	// reserve some more memory for buffers if possible
@@ -134,6 +136,7 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 			prio = 128
 		}
 
+		// 2xBufferSize -- one for input and one for output
 		if err := mp.memoryManager.ReserveMemory(2*BufferSize, prio); err != nil {
 			break
 		}
@@ -464,7 +467,7 @@ loop:
 					nextChunk = BufferSize
 				}
 
-				b, err := mp.readNextMsg(nextChunk)
+				b, err := mp.readNextChunk(nextChunk)
 				if err != nil {
 					mp.shutdownErr = err
 					return
@@ -576,7 +579,7 @@ func (mp *Multiplex) readNextMsgLen() (int, error) {
 	return int(l), nil
 }
 
-func (mp *Multiplex) readNextMsg(mlen int) ([]byte, error) {
+func (mp *Multiplex) readNextChunk(mlen int) ([]byte, error) {
 	buf, err := mp.getBufferInbound(mlen)
 	if err != nil {
 		return nil, err
