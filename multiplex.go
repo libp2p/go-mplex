@@ -23,7 +23,10 @@ const (
 	MaxMessageSize = 1 << 20
 	BufferSize     = 4096
 	MaxBuffers     = 4
-	ChunkSize      = BufferSize - 20
+)
+
+var (
+	ChunkSize = BufferSize - 20
 )
 
 // Max time to block waiting for a slow reader to read from a stream before
