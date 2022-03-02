@@ -184,6 +184,9 @@ func (mp *Multiplex) Close() error {
 	// Wait for the receive loop to finish.
 	<-mp.closed
 
+	// only stop it here, after the input loop has finished
+	mp.bufInTimer.Stop()
+
 	return nil
 }
 
@@ -195,7 +198,6 @@ func (mp *Multiplex) closeNoWait() {
 		mp.memoryManager.ReleaseMemory(mp.reservedMemory)
 		mp.con.Close()
 		close(mp.shutdown)
-		mp.bufInTimer.Stop()
 	}
 	mp.shutdownLock.Unlock()
 }
