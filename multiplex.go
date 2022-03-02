@@ -146,11 +146,9 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
 	mp.bufInTimer = time.NewTimer(0)
-	defer func() {
-		if !mp.bufInTimer.Stop() {
-			<-mp.bufInTimer.C
-		}
-	}()
+	if !mp.bufInTimer.Stop() {
+		<-mp.bufInTimer.C
+	}
 
 	go mp.handleIncoming()
 	go mp.handleOutgoing()
@@ -475,7 +473,10 @@ loop:
 				rd += nextChunk
 
 				if !recvTimeout.Stop() {
-					<-recvTimeout.C
+					select {
+					case <-recvTimeout.C:
+					default:
+					}
 				}
 				recvTimeout.Reset(ReceiveTimeout)
 
@@ -602,7 +603,10 @@ func (mp *Multiplex) skipNextMsg(mlen int) error {
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
 	defer func() {
 		if !mp.bufInTimer.Stop() {
-			<-mp.bufInTimer.C
+			select {
+			case <-mp.bufInTimer.C:
+			default:
+			}
 		}
 	}()
 	mp.bufInTimer.Reset(getInputBufferTimeout)
