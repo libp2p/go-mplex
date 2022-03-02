@@ -45,6 +45,8 @@ var errTimeout = timeout{}
 
 var ResetStreamTimeout = 2 * time.Minute
 
+var getInputBufferTimeout = time.Minute
+
 type timeout struct{}
 
 func (timeout) Error() string   { return "i/o deadline exceeded" }
@@ -93,6 +95,7 @@ type Multiplex struct {
 	chLock   sync.Mutex
 
 	bufIn, bufOut  chan struct{}
+	bufInTimer     *time.Timer
 	reservedMemory int
 }
 
@@ -139,6 +142,7 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	mp.writeCh = make(chan []byte, bufs)
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
+	mp.bufInTimer = time.NewTimer(0)
 
 	go mp.handleIncoming()
 	go mp.handleOutgoing()
@@ -191,6 +195,7 @@ func (mp *Multiplex) closeNoWait() {
 		mp.memoryManager.ReleaseMemory(mp.reservedMemory)
 		mp.con.Close()
 		close(mp.shutdown)
+		mp.bufInTimer.Stop()
 	}
 	mp.shutdownLock.Unlock()
 }
@@ -601,8 +606,15 @@ func (mp *Multiplex) skipNextMsg(mlen int) error {
 }
 
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
+	if !mp.bufInTimer.Stop() {
+		<-mp.bufInTimer.C
+	}
+	mp.bufInTimer.Reset(getInputBufferTimeout)
+
 	select {
 	case mp.bufIn <- struct{}{}:
+	case <-mp.bufInTimer.C:
+		return nil, errTimeout
 	case <-mp.shutdown:
 		return nil, ErrShutdown
 	}
