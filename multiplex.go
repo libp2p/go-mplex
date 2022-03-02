@@ -585,14 +585,10 @@ func (mp *Multiplex) readNextMsg(mlen int) ([]byte, error) {
 		return nil, err
 	}
 
-	n, err := io.ReadFull(mp.buf, buf)
+	_, err = io.ReadFull(mp.buf, buf)
 	if err != nil {
 		mp.putBufferInbound(buf)
 		return nil, err
-	}
-	if n < mlen {
-		mp.putBufferInbound(buf)
-		return nil, fmt.Errorf("incomplete read")
 	}
 
 	return buf, nil
