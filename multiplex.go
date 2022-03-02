@@ -388,7 +388,7 @@ loop:
 				return
 			}
 
-			if mlen > ChunkSize {
+			if mlen > BufferSize {
 				log.Debugf("stream name is too large! [%d]", mlen)
 				mp.shutdownErr = fmt.Errorf("stream name too large")
 				return
@@ -466,8 +466,8 @@ loop:
 		read:
 			for rd := 0; rd < mlen; {
 				nextChunk := mlen - rd
-				if nextChunk > ChunkSize {
-					nextChunk = ChunkSize
+				if nextChunk > BufferSize {
+					nextChunk = BufferSize
 				}
 
 				b, err := mp.readNextMsg(nextChunk)
