@@ -13,11 +13,6 @@ import (
 	"time"
 )
 
-func init() {
-	// Let's not slow down the tests too much...
-	ReceiveTimeout = 100 * time.Millisecond
-}
-
 func TestSlowReader(t *testing.T) {
 	a, b := net.Pipe()
 
