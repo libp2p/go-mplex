@@ -19,8 +19,12 @@ import (
 
 var log = logging.Logger("mplex")
 
-var MaxMessageSize = 1 << 20
-var MaxBuffers = 4
+const (
+	MaxMessageSize = 1 << 20
+	BufferSize     = 4096
+	MaxBuffers     = 4
+	ChunkSize      = BufferSize - 20
+)
 
 // Max time to block waiting for a slow reader to read from a stream before
 // resetting it. Preferably, we'd have some form of back-pressure mechanism but
@@ -39,11 +43,7 @@ var ErrInvalidState = errors.New("received an unexpected message from the peer")
 
 var errTimeout = timeout{}
 
-var (
-	ResetStreamTimeout = 2 * time.Minute
-
-	WriteCoalesceDelay = 100 * time.Microsecond
-)
+var ResetStreamTimeout = 2 * time.Minute
 
 type timeout struct{}
 
@@ -104,39 +104,39 @@ func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*M
 	mp := &Multiplex{
 		con:           con,
 		initiator:     initiator,
-		buf:           bufio.NewReader(con),
 		channels:      make(map[streamID]*Stream),
 		closed:        make(chan struct{}),
 		shutdown:      make(chan struct{}),
-		writeCh:       make(chan []byte, 16),
 		nstreams:      make(chan *Stream, 16),
 		memoryManager: memoryManager,
 	}
 
-	// up-front reserve memory for max buffers
-	bufs := 0
-	var err error
-	for i := 0; i < MaxBuffers; i++ {
-		var prio uint8
-		switch bufs {
-		case 0:
-			prio = 255
-		case 1:
-			prio = 192
-		default:
-			prio = 128
-		}
-		if err = mp.memoryManager.ReserveMemory(2*MaxMessageSize, prio); err != nil {
-			break
-		}
-		mp.reservedMemory += 2 * MaxMessageSize
-		bufs++
-	}
-
-	if bufs == 0 {
+	// up-front reserve memory for the essential buffers (1 input, 1 output + the reader buffer)
+	if err := mp.memoryManager.ReserveMemory(3*BufferSize, 255); err != nil {
 		return nil, err
 	}
 
+	mp.reservedMemory += 3 * BufferSize
+	bufs := 1
+
+	// reserve some more memory for buffers if possible
+	for i := 1; i < MaxBuffers; i++ {
+		var prio uint8
+		if bufs < 2 {
+			prio = 192
+		} else {
+			prio = 128
+		}
+
+		if err := mp.memoryManager.ReserveMemory(2*BufferSize, prio); err != nil {
+			break
+		}
+		mp.reservedMemory += 2 * BufferSize
+		bufs++
+	}
+
+	mp.buf = bufio.NewReaderSize(con, BufferSize)
+	mp.writeCh = make(chan []byte, bufs)
 	mp.bufIn = make(chan struct{}, bufs)
 	mp.bufOut = make(chan struct{}, bufs)
 
@@ -150,7 +150,7 @@ func (mp *Multiplex) newStream(id streamID, name string) (s *Stream) {
 	s = &Stream{
 		id:          id,
 		name:        name,
-		dataIn:      make(chan []byte, 8),
+		dataIn:      make(chan []byte, 1),
 		rDeadline:   makePipeDeadline(),
 		wDeadline:   makePipeDeadline(),
 		mp:          mp,
@@ -341,10 +341,7 @@ func (mp *Multiplex) handleIncoming() {
 	recvTimeout := time.NewTimer(0)
 	defer recvTimeout.Stop()
 
-	if !recvTimeout.Stop() {
-		<-recvTimeout.C
-	}
-
+loop:
 	for {
 		chID, tag, err := mp.readNextHeader()
 		if err != nil {
@@ -366,7 +363,7 @@ func (mp *Multiplex) handleIncoming() {
 		// etc...
 		tag += (tag & 1)
 
-		b, err := mp.readNext()
+		mlen, err := mp.readNextMsgLen()
 		if err != nil {
 			mp.shutdownErr = err
 			return
@@ -384,6 +381,18 @@ func (mp *Multiplex) handleIncoming() {
 				return
 			}
 
+			if mlen > ChunkSize {
+				log.Debugf("stream name is too large! [%d]", mlen)
+				mp.shutdownErr = fmt.Errorf("stream name too large")
+				return
+			}
+
+			b, err := mp.readNextMsg(mlen)
+			if err != nil {
+				mp.shutdownErr = err
+				return
+			}
+
 			name := string(b)
 			mp.putBufferInbound(b)
 
@@ -398,6 +407,11 @@ func (mp *Multiplex) handleIncoming() {
 			}
 
 		case resetTag:
+			if err := mp.skipNextMsg(mlen); err != nil {
+				mp.shutdownErr = err
+				return
+			}
+
 			if !ok {
 				// This is *ok*. We forget the stream on reset.
 				continue
@@ -407,6 +421,11 @@ func (mp *Multiplex) handleIncoming() {
 			msch.cancelRead(ErrStreamReset)
 			msch.cancelWrite(ErrStreamReset)
 		case closeTag:
+			if err := mp.skipNextMsg(mlen); err != nil {
+				mp.shutdownErr = err
+				return
+			}
+
 			if !ok {
 				// may have canceled our reads already.
 				continue
@@ -430,33 +449,67 @@ func (mp *Multiplex) handleIncoming() {
 				// We're not accepting data on this stream, for
 				// some reason. It's likely that we reset it, or
 				// simply canceled reads (e.g., called Close).
-				mp.putBufferInbound(b)
+				if err := mp.skipNextMsg(mlen); err != nil {
+					mp.shutdownErr = err
+					return
+				}
 				continue
 			}
 
-			recvTimeout.Reset(ReceiveTimeout)
-			select {
-			case msch.dataIn <- b:
-			case <-msch.readCancel:
-				// the user has canceled reading. walk away.
-				mp.putBufferInbound(b)
-			case <-recvTimeout.C:
-				mp.putBufferInbound(b)
-				log.Warnf("timed out receiving message into stream queue.")
-				// Do not do this asynchronously. Otherwise, we
-				// could drop a message, then receive a message,
-				// then reset.
-				msch.Reset()
-				continue
-			case <-mp.shutdown:
-				mp.putBufferInbound(b)
-				return
+		read:
+			for rd := 0; rd < mlen; {
+				nextChunk := mlen - rd
+				if nextChunk > ChunkSize {
+					nextChunk = ChunkSize
+				}
+
+				b, err := mp.readNextMsg(nextChunk)
+				if err != nil {
+					mp.shutdownErr = err
+					return
+				}
+
+				rd += nextChunk
+
+				if !recvTimeout.Stop() {
+					<-recvTimeout.C
+				}
+				recvTimeout.Reset(ReceiveTimeout)
+
+				select {
+				case msch.dataIn <- b:
+
+				case <-msch.readCancel:
+					// the user has canceled reading. walk away.
+					mp.putBufferInbound(b)
+					if err := mp.skipNextMsg(mlen - rd); err != nil {
+						mp.shutdownErr = err
+						return
+					}
+					break read
+
+				case <-recvTimeout.C:
+					mp.putBufferInbound(b)
+					log.Warnf("timed out receiving message into stream queue.")
+					// Do not do this asynchronously. Otherwise, we
+					// could drop a message, then receive a message,
+					// then reset.
+					msch.Reset()
+					if err := mp.skipNextMsg(mlen - rd); err != nil {
+						mp.shutdownErr = err
+						return
+					}
+					continue loop
+
+				case <-mp.shutdown:
+					mp.putBufferInbound(b)
+					return
+				}
 			}
-			if !recvTimeout.Stop() {
-				<-recvTimeout.C
-			}
+
 		default:
 			log.Debugf("message with unknown header on stream %s", ch)
+			mp.skipNextMsg(mlen)
 			if ok {
 				msch.Reset()
 			}
@@ -502,31 +555,49 @@ func (mp *Multiplex) readNextHeader() (uint64, uint64, error) {
 	return ch, rem, nil
 }
 
-func (mp *Multiplex) readNext() ([]byte, error) {
-	// get length
+func (mp *Multiplex) readNextMsgLen() (int, error) {
 	l, err := varint.ReadUvarint(mp.buf)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	if l > uint64(MaxMessageSize) {
-		return nil, fmt.Errorf("message size too large")
+		return 0, fmt.Errorf("message size too large")
 	}
 
 	if l == 0 {
-		return nil, nil
+		return 0, nil
 	}
 
-	buf, err := mp.getBufferInbound(int(l))
+	return int(l), nil
+}
+
+func (mp *Multiplex) readNextMsg(mlen int) ([]byte, error) {
+	buf, err := mp.getBufferInbound(mlen)
 	if err != nil {
 		return nil, err
 	}
+
 	n, err := io.ReadFull(mp.buf, buf)
 	if err != nil {
+		mp.putBufferInbound(buf)
 		return nil, err
 	}
+	if n < mlen {
+		mp.putBufferInbound(buf)
+		return nil, fmt.Errorf("incomplete read")
+	}
 
-	return buf[:n], nil
+	return buf, nil
+}
+
+func (mp *Multiplex) skipNextMsg(mlen int) error {
+	if mlen == 0 {
+		return nil
+	}
+
+	_, err := mp.buf.Discard(mlen)
+	return err
 }
 
 func (mp *Multiplex) getBufferInbound(length int) ([]byte, error) {
