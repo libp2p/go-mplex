@@ -141,8 +141,8 @@ func (s *Stream) Write(b []byte) (int, error) {
 	var written int
 	for written < len(b) {
 		wl := len(b) - written
-		if wl > MaxMessageSize {
-			wl = MaxMessageSize
+		if wl > ChunkSize {
+			wl = ChunkSize
 		}
 
 		n, err := s.write(b[written : written+wl])
