@@ -478,9 +478,9 @@ loop:
 
 				if !recvTimeout.Stop() && !recvTimeoutFired {
 					<-recvTimeout.C
-					recvTimeoutFired = false
 				}
 				recvTimeout.Reset(ReceiveTimeout)
+				recvTimeoutFired = false
 
 				select {
 				case msch.dataIn <- b:
