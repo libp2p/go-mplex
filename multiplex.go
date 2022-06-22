@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -83,7 +82,7 @@ const (
 
 // Multiplex is a mplex session.
 type Multiplex struct {
-	con       net.Conn
+	con       io.ReadWriteCloser
 	buf       *bufio.Reader
 	nextID    uint64
 	initiator bool
@@ -107,7 +106,7 @@ type Multiplex struct {
 }
 
 // NewMultiplex creates a new multiplexer session.
-func NewMultiplex(con net.Conn, initiator bool, memoryManager MemoryManager) (*Multiplex, error) {
+func NewMultiplex(con io.ReadWriteCloser, initiator bool, memoryManager MemoryManager) (*Multiplex, error) {
 	if memoryManager == nil {
 		memoryManager = &nullMemoryManager{}
 	}
