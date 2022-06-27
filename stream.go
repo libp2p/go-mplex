@@ -30,17 +30,20 @@ func (id *streamID) header(tag uint64) uint64 {
 	return header
 }
 
+type extraBufs struct {
+	extra []byte
+	// exbuf is for holding the reference to the beginning of the extra slice
+	// for later memory pool freeing
+	exbuf []byte
+}
+
 type Stream struct {
 	id     streamID
 	name   string
 	dataIn chan []byte
 	mp     *Multiplex
 
-	extra []byte
-
-	// exbuf is for holding the reference to the beginning of the extra slice
-	// for later memory pool freeing
-	exbuf []byte
+	extraBufs chan extraBufs
 
 	rDeadline, wDeadline pipeDeadline
 
@@ -53,42 +56,33 @@ func (s *Stream) Name() string {
 	return s.name
 }
 
-// tries to preload pending data
-func (s *Stream) preloadData() {
+func (s *Stream) waitForData() ([]byte, error, bool) {
 	select {
 	case read, ok := <-s.dataIn:
 		if !ok {
-			return
+			return nil, io.EOF, false
 		}
-		s.extra = read
-		s.exbuf = read
-	default:
-	}
-}
-
-func (s *Stream) waitForData() error {
-	select {
-	case read, ok := <-s.dataIn:
-		if !ok {
-			return io.EOF
-		}
-		s.extra = read
-		s.exbuf = read
-		return nil
+		return read, nil, false
 	case <-s.readCancel:
-		// This is the only place where it's safe to return these.
-		s.returnBuffers()
-		return s.readCancelErr
+		return nil, s.readCancelErr, true
 	case <-s.rDeadline.wait():
-		return errTimeout
+		// Close reading to clean up resources
+		s.cancelRead(errTimeout)
+		return nil, errTimeout, true
 	}
 }
 
 func (s *Stream) returnBuffers() {
-	if s.exbuf != nil {
-		s.mp.putBufferInbound(s.exbuf)
-		s.exbuf = nil
-		s.extra = nil
+loop:
+	for {
+		select {
+		case es := <-s.extraBufs:
+			if es.exbuf != nil {
+				s.mp.putBufferInbound(es.exbuf)
+			}
+		case s.extraBufs <- extraBufs{}:
+			break loop
+		}
 	}
 	for {
 		select {
@@ -107,32 +101,64 @@ func (s *Stream) returnBuffers() {
 }
 
 func (s *Stream) Read(b []byte) (int, error) {
+	// In case read is canceled, this case must take precedence over reading from s.extraBuffs
 	select {
 	case <-s.readCancel:
 		return 0, s.readCancelErr
 	default:
 	}
 
-	if s.extra == nil {
-		err := s.waitForData()
+	var es extraBufs
+	select {
+	case <-s.readCancel:
+		return 0, s.readCancelErr
+	case es = <-s.extraBufs:
+	}
+
+	if es.extra == nil {
+		var err error
+		var readIsCanceled bool
+		es.extra, err, readIsCanceled = s.waitForData()
+		es.exbuf = es.extra
 		if err != nil {
+			if !readIsCanceled {
+				// Special case that handles the situation of read not canceled
+				select {
+				case <-s.readCancel:
+				case s.extraBufs <- es:
+				}
+			}
 			return 0, err
 		}
 	}
 	n := 0
-	for s.extra != nil && n < len(b) {
-		read := copy(b[n:], s.extra)
+	for es.extra != nil && n < len(b) {
+		read := copy(b[n:], es.extra)
 		n += read
-		if read < len(s.extra) {
-			s.extra = s.extra[read:]
+		if read < len(es.extra) {
+			es.extra = es.extra[read:]
 		} else {
-			if s.exbuf != nil {
-				s.mp.putBufferInbound(s.exbuf)
+			if es.exbuf != nil {
+				s.mp.putBufferInbound(es.exbuf)
 			}
-			s.extra = nil
-			s.exbuf = nil
-			s.preloadData()
+			var read []byte
+			// Preload data
+			select {
+			case read = <-s.dataIn:
+			default:
+			}
+			es.exbuf = read
+			es.extra = read
 		}
+	}
+	select {
+	case <-s.readCancel:
+		if es.exbuf != nil {
+			s.mp.putBufferInbound(es.exbuf)
+		}
+		// it's not necessary to write to s.extraBuffs because reader above will go on the readCancel case
+		return n, s.readCancelErr
+	case s.extraBufs <- es:
 	}
 	return n, nil
 }
@@ -204,6 +230,8 @@ func (s *Stream) cancelRead(err error) bool {
 	default:
 		s.readCancelErr = err
 		close(s.readCancel)
+		// This is the only place where it's safe to return these.
+		s.returnBuffers()
 		return true
 	}
 }

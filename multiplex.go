@@ -171,7 +171,9 @@ func (mp *Multiplex) newStream(id streamID, name string) (s *Stream) {
 		mp:          mp,
 		writeCancel: make(chan struct{}),
 		readCancel:  make(chan struct{}),
+		extraBufs:   make(chan extraBufs, 1),
 	}
+	s.extraBufs <- extraBufs{}
 	return
 }
 
