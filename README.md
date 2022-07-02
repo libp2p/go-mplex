@@ -8,6 +8,8 @@
 
 A super simple [stream muxing](https://docs.libp2p.io/concepts/stream-multiplexing/) library implementing [mplex](https://github.com/libp2p/specs/tree/master/mplex).
 
+Users should prefer [yamux](https://github.com/libp2p/go-libp2p/tree/master/p2p/muxer/yamux) over mplex. We would like to deprecate mplex in the future.
+
 ## Usage
 
 ```go
