@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -121,7 +120,7 @@ func TestBasicStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	buf, err := ioutil.ReadAll(s)
+	buf, err := io.ReadAll(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +390,7 @@ func TestHalfClose(t *testing.T) {
 
 	close(wait)
 
-	buf, err := ioutil.ReadAll(s)
+	buf, err := io.ReadAll(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +630,7 @@ func TestCancelRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Data should still be sent.
-	buf, err := ioutil.ReadAll(sb)
+	buf, err := io.ReadAll(sb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +693,7 @@ func TestCancelWrite(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	_, err = ioutil.ReadAll(sb)
+	_, err = io.ReadAll(sb)
 	if err != nil {
 		t.Fatalf("expected stream to be closed correctly")
 	}
@@ -712,7 +711,7 @@ func TestCancelWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Data should still be sent.
-	buf, err := ioutil.ReadAll(sa)
+	buf, err := io.ReadAll(sa)
 	if err != nil {
 		t.Fatal(err)
 	}
