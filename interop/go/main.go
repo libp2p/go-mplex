@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"sync"
 
@@ -86,7 +85,7 @@ func readWrite(s *mplex.Stream) {
 				panic("bad bytes")
 			}
 		}
-		buf, err := ioutil.ReadAll(s)
+		buf, err := io.ReadAll(s)
 		if err != nil {
 			panic(err)
 		}
