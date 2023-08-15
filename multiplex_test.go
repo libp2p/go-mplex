@@ -2,9 +2,9 @@ package multiplex
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"os"
 	"sync"
