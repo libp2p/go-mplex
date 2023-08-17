@@ -1,4 +1,9 @@
-# go-mplex
+# DEPRECATED: go-mplex
+
+mplex is deprecated. When on TCP, we recommend using [Yamux](https://github.com/libp2p/go-yamux/) instead.
+If TCP is not a requirement, consider using QUIC instead.
+
+---
 
 [![](https://img.shields.io/badge/made%20by-Protocol%20Labs-blue.svg?style=flat-square)](https://protocol.ai)
 [![Go Reference](https://pkg.go.dev/badge/github.com/libp2p/go-mplex.svg)](https://pkg.go.dev/github.com/libp2p/go-mplex)
