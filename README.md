@@ -3,6 +3,8 @@
 mplex is deprecated. When on TCP, we recommend using [Yamux](https://github.com/libp2p/go-yamux/) instead.
 If TCP is not a requirement, consider using QUIC instead.
 
+Ref: Discussion around mplex deprecation: https://github.com/libp2p/specs/issues/553
+
 ---
 
 [![](https://img.shields.io/badge/made%20by-Protocol%20Labs-blue.svg?style=flat-square)](https://protocol.ai)
