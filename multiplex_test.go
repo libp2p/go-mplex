@@ -1085,11 +1085,11 @@ func arrComp(a, b []byte) error {
 	for i := 0; i < len(a) && i < len(b); i++ {
 		if a[i] != b[i] {
 			msg += fmt.Sprintf("content differs at index %d [%d != %d]", i, a[i], b[i])
-			return fmt.Errorf(msg)
+			return fmt.Error(msg)
 		}
 	}
 	if len(msg) > 0 {
-		return fmt.Errorf(msg)
+		return fmt.Error(msg)
 	}
 	return nil
 }
